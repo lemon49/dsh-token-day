@@ -106,16 +106,19 @@
   line-height: 17px;
 }
 
-/* Fixed one-year calendar grid: weeks as columns, Monday–Sunday as rows. */
+/* Fixed one-year calendar grid: 16px square cells, content-sized width, centered. */
 .activityGrid {
   display: grid;
   box-sizing: border-box;
-  width: 100%;
+  width: max-content;
+  max-width: 100%;
   min-width: 0;
   grid-auto-flow: column;
-  grid-template-rows: repeat(7, minmax(0, 1fr));
-  gap: 3px;
+  grid-template-rows: repeat(7, 16px);
+  gap: 2px;
   padding: 2px;
+  margin: 0 auto;
+  overflow-x: auto;
 }
 
 .activityCell,
@@ -128,11 +131,10 @@
 }
 
 .activityCell {
-  width: 100%;
-  height: auto;
+  width: 16px;
+  height: 16px;
   min-width: 0;
   padding: 0;
-  aspect-ratio: 1;
   cursor: pointer;
 }
 

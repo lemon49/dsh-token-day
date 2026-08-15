@@ -402,7 +402,7 @@ function ActivityHeatmap({
           <span>{t('more')}</span>
         </div>
       </div>
-      <div className={css.activityGrid} style={{ gridTemplateColumns: `repeat(${weeks}, minmax(0, 1fr))` }} role="grid" aria-label={t('activity')}>
+      <div className={css.activityGrid} style={{ gridTemplateColumns: `repeat(${weeks}, 16px)` }} role="grid" aria-label={t('activity')}>
         {calendar.map((day, index) => {
           if (day.empty) {
             return <span key={`empty-${index}`} className={css.activityCell} data-empty="true" role="gridcell" />
