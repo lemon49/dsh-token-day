@@ -119,13 +119,10 @@
 }
 
 /* Heatmap matrix: fixed-height calendar with month row and weekday gutter.
-   Cells stay square (max 30px); when many weeks exceed the container width,
-   cells shrink to keep the block height constant. */
+   Cells fill their grid tracks exactly, so every cell has the same size. */
 .activityMatrix {
   display: grid;
   gap: 3px;
-  align-items: center;
-  justify-items: center;
   grid-template-rows: 20px repeat(7, 30px);
   margin-top: 8px;
 }
@@ -168,10 +165,9 @@
 
 .activityCell {
   width: 100%;
-  max-width: 30px;
+  height: 100%;
   min-width: 0;
   padding: 0;
-  aspect-ratio: 1;
   cursor: pointer;
 }
 
