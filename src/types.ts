@@ -16,6 +16,14 @@ export interface DailyRequests {
   billed: number
 }
 
+/** Per-UTC-day contribution of one model route. */
+export interface ModelDailyTokenUsageRecord {
+  /** Calendar date in YYYY-MM-DD form. */
+  date: string
+  requests: DailyRequests
+  usage: TokenUsageBuckets
+}
+
 /** Usage attributed to one provider/model route. */
 export interface ModelTokenUsageRecord {
   provider: string
@@ -27,6 +35,8 @@ export interface ModelTokenUsageRecord {
   /** Requests on this route that produced non-zero usage. */
   billedRequests: number
   usage: TokenUsageBuckets
+  /** Per-day contributions, oldest first. */
+  days: readonly ModelDailyTokenUsageRecord[]
 }
 
 /** Token usage attributed to one UTC calendar date. */

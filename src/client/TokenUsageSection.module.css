@@ -963,3 +963,35 @@
   color: var(--dsw-alias-label-primary);
   margin-top: 2px;
 }
+
+/* Scrollable model table. */
+.modelScroll {
+  max-height: 340px;
+  overflow-y: auto;
+}
+
+.modelScroll .tableWrap {
+  overflow: visible;
+}
+
+/* Chart header total block (official style). */
+.chartTotalBlock {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.chartTotalLabel {
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+  white-space: nowrap;
+}
+
+.chartTotal {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}

@@ -6,11 +6,11 @@ DeepSeek Harness（DSH）的 Token 用量与计费统计插件。基于 DSH 持�
 
 ## 功能特性
 
-- **顶部统计卡**：请求总数、已计量、Token 总数、缓存命中 Token、覆盖率、活跃天数，支持 7 / 30 / 90 天范围切换
+- **顶部统计卡**：请求总数、已计量、Token 总数、缓存命中 Token、活跃天数，支持**当日 / 7 天 / 30 天 / 90 天**范围切换
 - **每日活动热力图**：最近 30 周每日请求活跃度，悬停查看当日 Token 明细
-- **模型板块**：展示全部已记录模型路由（模型 / 提供方 / 请求数 / 已计量 / Token 数 / 占比进度条），支持搜索过滤
-- **Tokens 堆叠柱状图**：按天展示输入（命中缓存 / 未命中缓存）与输出 Token，悬停查看当日三段明细
-- **数据口径**：四桶 Token（uncachedInput / output / cacheRead / cacheWrite）；billed = 产生非零 usage 的请求；覆盖率 = billed / 请求总数
+- **模型板块**：展示所选时间范围内全部模型路由（模型 / 提供方 / 请求数 / 已计量 / Token 数 / 占比进度条），随范围切换，模型多时表格可滚动
+- **Tokens 堆叠柱状图**：按天展示输入（命中缓存 / 未命中缓存）与输出 Token，顶部显示范围总量，悬停查看当日三段明细
+- **数据口径**：四桶 Token（uncachedInput / output / cacheRead / cacheWrite）；billed = 产生非零 usage 的请求
 
 ## 安装
 
@@ -52,6 +52,18 @@ dsh plugin --profile web add github:lemon49/dsh-token-day
 
 安装后重启 `dsh web` 即可使用。仓库已提交构建产物 `lib/`，无需任何构建授权。
 
+## 更新
+
+插件通过 dsh 命令更新（转发给 pnpm 更新 git 依赖到最新提交）：
+
+```sh
+dsh plugin --profile web update dsh-token-day
+# 或重新安装拉取最新
+dsh plugin --profile web add github:lemon49/dsh-token-day
+```
+
+更新后重启 `dsh web` 生效。更新到包含新版本投影结构的版本后，插件会自动重建历史用量投影（首次耗时与历史会话量相关，后台渐进完成）。
+
 ## 构建
 
 ```sh
@@ -87,7 +99,7 @@ dsh-token-day/
 ## 数据说明
 
 - 全部数据来自 DSH 会话事件（`assistant/chunk`、`assistant/message`、`compaction/summary` 等），**不保存提示词或回复正文**
-- 投影 key 为 `tokenDay`（stateVersion 7），与 `dsh-token-usage` 的 `tokenUsageRecorder` 互不冲突，可并存
+- 投影 key 为 `tokenDay`（stateVersion 8），与 `dsh-token-usage` 的 `tokenUsageRecorder` 互不冲突，可并存
 - 金额（消费金额/API 标价折算）相关展示不在本轮范围内，后续迭代补充
 
 ## 许可证

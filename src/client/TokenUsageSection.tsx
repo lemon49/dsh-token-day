@@ -123,6 +123,25 @@ function sessionRow(summary: SessionSummary): SessionUsageRow | null {
   }
 }
 
+/** Merge one model day entry into a map, returning the updated entry. */
+function mergeModelDay(
+  map: Map<string, ModelTokenUsageRecord['days'][number]>,
+  day: ModelTokenUsageRecord['days'][number],
+): void {
+  const current = map.get(day.date)
+  map.set(day.date, current === undefined
+    ? day
+    : {
+      date: day.date,
+      requests: {
+        assistant: current.requests.assistant + day.requests.assistant,
+        compaction: current.requests.compaction + day.requests.compaction,
+        billed: current.requests.billed + day.requests.billed,
+      },
+      usage: addBuckets(current.usage, day.usage),
+    })
+}
+
 /** Aggregate session summaries into totals and provider/model records. */
 export function aggregateUsage(summaries: readonly SessionSummary[]): DashboardData {
   const models = new Map<string, ModelTokenUsageRecord>()
@@ -156,15 +175,19 @@ export function aggregateUsage(summaries: readonly SessionSummary[]): DashboardD
     for (const model of row.models) {
       const key = modelKey(model)
       const current = models.get(key)
-      models.set(key, current === undefined ? {
-        ...model,
-        usage: { ...model.usage },
-      } : {
+      if (current === undefined) {
+        models.set(key, { ...model, usage: { ...model.usage }, days: [...model.days] })
+        continue
+      }
+      const mergedDays = new Map(current.days.map(day => [day.date, day]))
+      for (const day of model.days) mergeModelDay(mergedDays, day)
+      models.set(key, {
         ...current,
         assistantRequests: current.assistantRequests + model.assistantRequests,
         compactionRequests: current.compactionRequests + model.compactionRequests,
         billedRequests: current.billedRequests + model.billedRequests,
         usage: addBuckets(current.usage, model.usage),
+        days: [...mergedDays.values()].sort((left, right) => left.date.localeCompare(right.date)),
       })
     }
   }
@@ -220,6 +243,41 @@ function rangeAggregate(days: readonly DailyTokenUsageRecord[], range: number, n
     records.push(day)
   }
   return { requests, billed, usage, activeDays, records }
+}
+
+/** Aggregate one fixed UTC date range across model routes. */
+function rangeModels(models: readonly ModelTokenUsageRecord[], range: number, now = Date.now()): ModelTokenUsageRecord[] {
+  const dates = new Set(datesEndingOn(now, range))
+  const result: ModelTokenUsageRecord[] = []
+  for (const model of models) {
+    let assistant = 0
+    let compaction = 0
+    let billed = 0
+    let usage = zeroBuckets()
+    let hasAny = false
+    for (const day of model.days) {
+      if (!dates.has(day.date)) continue
+      hasAny = true
+      assistant += day.requests.assistant
+      compaction += day.requests.compaction
+      billed += day.requests.billed
+      usage = addBuckets(usage, day.usage)
+    }
+    if (!hasAny) continue
+    result.push({
+      provider: model.provider,
+      model: model.model,
+      assistantRequests: assistant,
+      compactionRequests: compaction,
+      billedRequests: billed,
+      usage,
+      days: [],
+    })
+  }
+  return result.sort((left, right) =>
+    totalTokens(right.usage) - totalTokens(left.usage)
+    || left.provider.localeCompare(right.provider)
+    || left.model.localeCompare(right.model))
 }
 
 /** Render a summary metric card with exact values available on hover. */
@@ -323,78 +381,62 @@ function ActivityHeatmap({
   )
 }
 
-/** Render the model table with all recorded provider/model routes. */
+/** Render the model table scoped to the selected date range. */
 function ModelTable({
   models,
-  query,
-  onQueryChange,
   t,
 }: {
   models: readonly ModelTokenUsageRecord[]
-  query: string
-  onQueryChange(value: string): void
   t: TokenUsageSectionProps['t']
 }): ReactNode {
-  const normalized = query.trim().toLocaleLowerCase()
-  const filtered = useMemo(() => {
-    if (normalized.length === 0) return models
-    return models.filter(model =>
-      model.model.toLocaleLowerCase().includes(normalized)
-      || model.provider.toLocaleLowerCase().includes(normalized))
-  }, [models, normalized])
   const total = models.reduce((sum, model) => sum + totalTokens(model.usage), 0)
   return (
     <div className={css.block}>
       <div className={css.blockHead}>
         <h3>{t('modelBreakdown')}</h3>
-        <input
-          type="search"
-          value={query}
-          placeholder={t('searchModels')}
-          aria-label={t('searchModels')}
-          onChange={(event) => { onQueryChange(event.currentTarget.value) }}
-        />
       </div>
-      {filtered.length === 0 ? <p className={css.status}>{t('emptyModels')}</p> : (
-        <div className={css.tableWrap}>
-          <table className={css.modelTable}>
-            <thead>
-              <tr>
-                <th>{t('modelCol')}</th>
-                <th>{t('providerCol')}</th>
-                <th>{t('requestsCol')}</th>
-                <th>{t('billedCol')}</th>
-                <th>{t('tokensCol')}</th>
-                <th>{t('shareCol')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map(model => {
-                const share = total === 0 ? 0 : totalTokens(model.usage) / total
-                return (
-                  <tr key={modelKey(model)}>
-                    <td>
-                      {isUnattributed(model)
-                        ? <strong>{t('unknownRoute')}</strong>
-                        : <strong>{model.model}</strong>}
-                    </td>
-                    <td>{model.provider}</td>
-                    <td>{formatTokens(recordedRequests(model))}</td>
-                    <td>{formatTokens(model.billedRequests)}</td>
-                    <td><span className={css.tokenValue} title={formatTokens(totalTokens(model.usage))}>{formatCompactTokens(totalTokens(model.usage))}</span></td>
-                    <td>
-                      <span className={css.shareCell}>
-                        <span className={css.shareBar}>
-                          <i style={{ width: `${Math.round(share * 100)}%` }} />
+      {models.length === 0 ? <p className={css.status}>{t('emptyModels')}</p> : (
+        <div className={css.modelScroll}>
+          <div className={css.tableWrap}>
+            <table className={css.modelTable}>
+              <thead>
+                <tr>
+                  <th>{t('modelCol')}</th>
+                  <th>{t('providerCol')}</th>
+                  <th>{t('requestsCol')}</th>
+                  <th>{t('billedCol')}</th>
+                  <th>{t('tokensCol')}</th>
+                  <th>{t('shareCol')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {models.map(model => {
+                  const share = total === 0 ? 0 : totalTokens(model.usage) / total
+                  return (
+                    <tr key={modelKey(model)}>
+                      <td>
+                        {isUnattributed(model)
+                          ? <strong>{t('unknownRoute')}</strong>
+                          : <strong>{model.model}</strong>}
+                      </td>
+                      <td>{model.provider}</td>
+                      <td>{formatTokens(recordedRequests(model))}</td>
+                      <td>{formatTokens(model.billedRequests)}</td>
+                      <td><span className={css.tokenValue} title={formatTokens(totalTokens(model.usage))}>{formatCompactTokens(totalTokens(model.usage))}</span></td>
+                      <td>
+                        <span className={css.shareCell}>
+                          <span className={css.shareBar}>
+                            <i style={{ width: `${Math.round(share * 100)}%` }} />
+                          </span>
+                          <em>{formatPercent(share)}</em>
                         </span>
-                        <em>{formatPercent(share)}</em>
-                      </span>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>
@@ -431,12 +473,20 @@ function niceMaximum(value: number): number {
   return 10 * magnitude
 }
 
+/** Format one ISO date as M/D without leading zeros (official style). */
+function shortDate(iso: string): string {
+  const [year, month, day] = iso.split('-')
+  return `${Number(month)}/${Number(day)}`
+}
+
 /** Render the stacked daily Tokens bar chart (cache hit / cache miss / output). */
 function TokensChart({
   records,
+  rangeLabel,
   t,
 }: {
   records: readonly DailyTokenUsageRecord[]
+  rangeLabel: string
   t: TokenUsageSectionProps['t']
 }): ReactNode {
   const slices = useMemo(() => tokenSlices(records), [records])
@@ -447,15 +497,15 @@ function TokensChart({
   }
   const maximum = niceMaximum(Math.max(...slices.map(slice => slice.total)))
   const width = 820
-  const height = 260
-  const padTop = 14
+  const height = 264
+  const padTop = 16
   const padRight = 10
   const padBottom = 30
   const padLeft = 56
   const plotWidth = width - padLeft - padRight
   const plotHeight = height - padTop - padBottom
   const column = plotWidth / slices.length
-  const barWidth = Math.min(46, Math.max(3, column * 0.62))
+  const barWidth = Math.min(52, Math.max(4, column * 0.68))
   const axisTicks = [0, 0.5, 1].map(ratio => maximum * ratio)
   const y = (value: number): number => padTop + plotHeight * (1 - value / maximum)
   const labelEvery = Math.max(1, Math.ceil(slices.length / 7))
@@ -466,7 +516,10 @@ function TokensChart({
           <h3>{t('tokensChart')}</h3>
           <p>{t('tokensChartIntro')}</p>
         </div>
-        <strong className={css.chartTotal} title={formatTokens(total)}>{formatCompactTokens(total)}</strong>
+        <span className={css.chartTotalBlock}>
+          <span className={css.chartTotalLabel}>{t('chartRange', { range: rangeLabel })}</span>
+          <strong className={css.chartTotal} title={formatTokens(total)}>{formatTokens(total)}</strong>
+        </span>
       </div>
       <div className={css.chartLegend}>
         <span><i className={css.legendHit} />{t('cacheHitInput')}</span>
@@ -511,20 +564,16 @@ function TokensChart({
                 </> : null}
                 {index % labelEvery === 0 ? (
                   <text x={padLeft + column * index + column / 2} y={height - 8} textAnchor="middle" className={css.chartAxisLabel}>
-                    {slice.date.slice(5)}
+                    {shortDate(slice.date)}
                   </text>
                 ) : null}
-                {hover ? (
-                  <g>
-                    <rect
-                      x={padLeft + column * index}
-                      y={padTop}
-                      width={column}
-                      height={plotHeight}
-                      className={css.chartHoverZone}
-                    />
-                  </g>
-                ) : null}
+                {hover ? <rect
+                  x={padLeft + column * index}
+                  y={padTop}
+                  width={column}
+                  height={plotHeight}
+                  className={css.chartHoverZone}
+                /> : null}
               </g>
             )
           })}
@@ -533,7 +582,7 @@ function TokensChart({
           const slice = slices[hovered]
           return (
             <div className={css.chartTooltip} style={{ left: `${(padLeft + column * hovered + column / 2) / width * 100}%` }}>
-              <strong>{slice.date}</strong>
+              <strong>{shortDate(slice.date)}</strong>
               <span>{t('cacheHitInput')} · {formatTokens(slice.hit)}</span>
               <span>{t('cacheMissInput')} · {formatTokens(slice.miss)}</span>
               <span>{t('output')} · {formatTokens(slice.output)}</span>
@@ -554,15 +603,15 @@ export function TokenUsageSection({
   const phase = useSessions(state => state.phase)
   const ids = useSessions(state => state.ids)
   const byId = useSessions(state => state.byId)
-  const [range, setRange] = useState<7 | 30 | 90>(30)
-  const [query, setQuery] = useState('')
+  const [range, setRange] = useState<1 | 7 | 30 | 90>(30)
 
   const data = useMemo(
     () => aggregateUsage(ids.map(id => byId[id]).filter((value): value is SessionSummary => value !== undefined)),
     [byId, ids],
   )
   const period = useMemo(() => rangeAggregate(data.days, range), [data.days, range])
-  const coverage = period.requests === 0 ? undefined : period.billed / period.requests
+  const scopedModels = useMemo(() => rangeModels(data.models, range), [data.models, range])
+  const rangeLabel = range === 1 ? t('today') : t('rangeDays', { count: range })
 
   if (phase !== 'ready' && ids.length === 0) {
     return <p className={css.status}>{t('loading')}</p>
@@ -579,14 +628,14 @@ export function TokenUsageSection({
 
       {data.days.length === 0 ? <p className={css.status}>{t('empty')}</p> : (
         <>
-          <div className={css.rangeTabs} aria-label={t('rangeDays', { count: range })}>
-            {([7, 30, 90] as const).map(value => (
+          <div className={css.rangeTabs} aria-label={rangeLabel}>
+            {([1, 7, 30, 90] as const).map(value => (
               <button
                 key={value}
                 type="button"
                 aria-pressed={range === value}
                 onClick={() => { setRange(value) }}
-              >{t('rangeDays', { count: value })}</button>
+              >{value === 1 ? t('today') : t('rangeDays', { count: value })}</button>
             ))}
           </div>
 
@@ -595,13 +644,12 @@ export function TokenUsageSection({
             <Metric label={t('billed')} value={period.billed} />
             <Metric label={t('totalTokens')} value={totalTokens(period.usage)} />
             <Metric label={t('cacheHitTokens')} value={period.usage.cacheReadTokens} />
-            <Metric label={t('coverage')} value={coverage === undefined ? '—' : formatPercent(coverage)} />
-            <Metric label={t('activeDays')} value={`${period.activeDays}/${range}`} />
+            <Metric label={t('activeDays')} value={range === 1 ? `${period.activeDays}/1` : `${period.activeDays}/${range}`} />
           </div>
 
           <ActivityHeatmap days={data.days} t={t} />
-          <ModelTable models={data.models} query={query} onQueryChange={setQuery} t={t} />
-          <TokensChart records={period.records} t={t} />
+          <ModelTable models={scopedModels} t={t} />
+          <TokensChart records={period.records} rangeLabel={rangeLabel} t={t} />
         </>
       )}
     </section>

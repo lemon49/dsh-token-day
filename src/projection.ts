@@ -7,6 +7,7 @@ import type {} from '@deepseek-ai/dsh-llm-retry'
 import type {
   DailyRequests,
   DailyTokenUsageRecord,
+  ModelDailyTokenUsageRecord,
   ModelTokenUsageRecord,
   TokenDayProjection,
   TokenUsageBuckets,
@@ -15,6 +16,25 @@ import type {
 interface Route {
   provider: string
   model: string
+}
+
+/** Per-UTC-day contribution of one model route (internal reducer shape). */
+interface ModelDayState {
+  assistant: number
+  compaction: number
+  billed: number
+  usage: TokenUsageBuckets
+}
+
+/** One model route's full reducer state. */
+interface ModelState {
+  provider: string
+  model: string
+  assistantRequests: number
+  compactionRequests: number
+  billedRequests: number
+  usage: TokenUsageBuckets
+  days: Record<string, ModelDayState>
 }
 
 interface AssistantSample {
@@ -33,7 +53,7 @@ interface RecorderState {
   billedRequests: number
   compactionUsage: TokenUsageBuckets
   usage: TokenUsageBuckets
-  models: Record<string, ModelTokenUsageRecord>
+  models: Record<string, ModelState>
   days: Record<string, { requests: DailyRequests; usage: TokenUsageBuckets }>
   lastAssistant: AssistantSample | null
 }
@@ -64,6 +84,11 @@ const projectionSchema: z.ZodType<TokenDayProjection> = z.object({
     compactionRequests: z.number().int().nonnegative(),
     billedRequests: z.number().int().nonnegative(),
     usage: bucketsSchema,
+    days: z.array(z.object({
+      date: z.string(),
+      requests: requestsSchema,
+      usage: bucketsSchema,
+    }).strict()),
   }).strict()),
   days: z.array(z.object({
     date: z.string(),
@@ -161,18 +186,26 @@ function routeKey(route: Route): string {
   return JSON.stringify([route.provider, route.model])
 }
 
+/** Whether a model day entry became empty after replacing its only sample. */
+function modelDayEmpty(day: ModelDayState): boolean {
+  return day.assistant === 0 && day.compaction === 0 && day.billed === 0
+    && bucketsEqual(day.usage, zeroBuckets())
+}
+
 /** Whether a route record became empty after replacing its only sample. */
-function recordEmpty(record: ModelTokenUsageRecord): boolean {
+function recordEmpty(record: ModelState): boolean {
   return record.assistantRequests === 0
     && record.compactionRequests === 0
     && record.billedRequests === 0
     && bucketsEqual(record.usage, zeroBuckets())
+    && Object.keys(record.days).length === 0
 }
 
 /** Apply one signed model-attributed usage sample to a cloned model table. */
 function adjustModel(
-  models: Record<string, ModelTokenUsageRecord>,
+  models: Record<string, ModelState>,
   route: Route,
+  day: string,
   usage: TokenUsageBuckets,
   direction: 1 | -1,
   kind: 'assistant' | 'compaction',
@@ -185,13 +218,25 @@ function adjustModel(
     compactionRequests: 0,
     billedRequests: 0,
     usage: zeroBuckets(),
+    days: {},
   }
-  const next: ModelTokenUsageRecord = {
+  const dayState = current.days[day] ?? { assistant: 0, compaction: 0, billed: 0, usage: zeroBuckets() }
+  const nextDay: ModelDayState = {
+    assistant: dayState.assistant + (kind === 'assistant' ? direction : 0),
+    compaction: dayState.compaction + (kind === 'compaction' ? direction : 0),
+    billed: dayState.billed + (billed ? direction : 0),
+    usage: addBuckets(dayState.usage, usage, direction),
+  }
+  const days = { ...current.days }
+  if (modelDayEmpty(nextDay)) delete days[day]
+  else days[day] = nextDay
+  const next: ModelState = {
     ...current,
     assistantRequests: current.assistantRequests + (kind === 'assistant' ? direction : 0),
     compactionRequests: current.compactionRequests + (kind === 'compaction' ? direction : 0),
     billedRequests: current.billedRequests + (billed ? direction : 0),
     usage: addBuckets(current.usage, usage, direction),
+    days,
   }
   if (recordEmpty(next)) delete models[key]
   else models[key] = next
@@ -253,9 +298,10 @@ ProjectionDefinition<'tokenDay', RecorderState> = {
         return { ...state, lastAssistant: null }
       }
       const models = { ...state.models }
-      if (state.route !== null) adjustModel(models, state.route, zeroBuckets(), 1, 'assistant', false)
+      const day = dayKey(event.time)
+      if (state.route !== null) adjustModel(models, state.route, day, zeroBuckets(), 1, 'assistant', false)
       const days = { ...state.days }
-      adjustDay(days, dayKey(event.time), { assistant: 1, compaction: 0, billed: 0 }, zeroBuckets(), 1)
+      adjustDay(days, day, { assistant: 1, compaction: 0, billed: 0 }, zeroBuckets(), 1)
       return { ...state, assistantRequests: state.assistantRequests + 1, models, days }
     }
     if (event.type === 'compaction/summary') {
@@ -264,7 +310,7 @@ ProjectionDefinition<'tokenDay', RecorderState> = {
       const days = { ...state.days }
       if (event.data.usage === undefined) {
         const models = { ...state.models }
-        adjustModel(models, { provider: event.data.provider, model: event.data.model }, zeroBuckets(), 1, 'compaction', false)
+        adjustModel(models, { provider: event.data.provider, model: event.data.model }, day, zeroBuckets(), 1, 'compaction', false)
         adjustDay(days, day, { assistant: 0, compaction: 1, billed: 0 }, zeroBuckets(), 1)
         return { ...state, compactionRequests, models, days }
       }
@@ -272,7 +318,7 @@ ProjectionDefinition<'tokenDay', RecorderState> = {
       const billed = totalTokens(usage) > 0
       const route = { provider: event.data.provider, model: event.data.model }
       const models = { ...state.models }
-      adjustModel(models, route, usage, 1, 'compaction', billed)
+      adjustModel(models, route, day, usage, 1, 'compaction', billed)
       adjustDay(days, day, { assistant: 0, compaction: 1, billed: billed ? 1 : 0 }, usage, 1)
       return {
         ...state,
@@ -319,30 +365,21 @@ ProjectionDefinition<'tokenDay', RecorderState> = {
     let total = state.usage
     if (previous !== null) {
       total = addBuckets(total, previous.usage, -1)
-      adjustModel(models, previous.route, previous.usage, -1, 'assistant', previous.billed)
+      adjustModel(models, previous.route, previous.day, previous.usage, -1, 'assistant', previous.billed)
       adjustDay(days, previous.day, zeroRequests(), previous.usage, -1)
-      if (previous.billed !== billed) {
-        // Billed status changed: withdraw it from the previous day (when it
-        // was counted) and credit it on the usage day (when it now applies).
-        // A same request updating across a UTC-day boundary keeps its billed
-        // contribution with the newer day.
-        if (previous.billed) {
-          adjustDay(days, previous.day, { assistant: 0, compaction: 0, billed: 1 }, zeroBuckets(), -1)
-        }
-        if (billed) {
-          adjustDay(days, day, { assistant: 0, compaction: 0, billed: 1 }, zeroBuckets(), 1)
-        }
-      }
     } else {
       adjustDay(days, day, { assistant: 1, compaction: 0, billed: billed ? 1 : 0 }, zeroBuckets(), 1)
     }
     total = addBuckets(total, usage, 1)
-    adjustModel(models, route, usage, 1, 'assistant', billed)
+    adjustModel(models, route, day, usage, 1, 'assistant', billed)
     adjustDay(days, day, zeroRequests(), usage, 1)
+    const billedDelta = previous === null
+      ? (billed ? 1 : 0)
+      : (billed !== previous.billed ? (billed ? 1 : -1) : 0)
     return {
       ...state,
       assistantRequests: state.assistantRequests + (previous === null ? 1 : 0),
-      billedRequests: state.billedRequests + (previous === null ? (billed ? 1 : 0) : (billed !== previous!.billed ? (billed ? 1 : -1) : 0)),
+      billedRequests: state.billedRequests + billedDelta,
       usage: total,
       models,
       days,
@@ -355,7 +392,21 @@ ProjectionDefinition<'tokenDay', RecorderState> = {
     billedRequests: state.billedRequests,
     compactionUsage: state.compactionUsage,
     usage: state.usage,
-    models: Object.values(state.models).sort((left, right) =>
+    models: Object.values(state.models).map((model): ModelTokenUsageRecord => ({
+      provider: model.provider,
+      model: model.model,
+      assistantRequests: model.assistantRequests,
+      compactionRequests: model.compactionRequests,
+      billedRequests: model.billedRequests,
+      usage: model.usage,
+      days: Object.entries(model.days)
+        .map(([date, day]): ModelDailyTokenUsageRecord => ({
+          date,
+          requests: { assistant: day.assistant, compaction: day.compaction, billed: day.billed },
+          usage: day.usage,
+        }))
+        .sort((left, right) => left.date.localeCompare(right.date)),
+    })).sort((left, right) =>
       totalTokens(right.usage) - totalTokens(left.usage)
       || left.provider.localeCompare(right.provider)
       || left.model.localeCompare(right.model)),
@@ -363,7 +414,7 @@ ProjectionDefinition<'tokenDay', RecorderState> = {
       .map(([date, value]): DailyTokenUsageRecord => ({ date, requests: value.requests, usage: value.usage }))
       .sort((left, right) => left.date.localeCompare(right.date)),
   }),
-  stateVersion: 7,
+  stateVersion: 8,
 }
 
 /** Fold one complete event sequence through the canonical persistent projection reducer. */
