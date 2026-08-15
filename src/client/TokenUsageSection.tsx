@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { Fragment, useMemo, useState, type ReactNode } from 'react'
 import type { SessionSummary } from '@deepseek-ai/dsh-client-runtime/client'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {
@@ -343,8 +343,12 @@ interface ActivityCell {
   empty: boolean
 }
 
-/** Build calendar cells for the selected date span, aligned to Monday-start weeks. */
-function activityCalendar(dates: readonly string[], days: readonly DailyTokenUsageRecord[], now = Date.now()): ActivityCell[] {
+/** Heatmap time spans (days) selectable from its own controls. */
+type HeatSpan = 90 | 180 | 365
+
+/** Build calendar cells for a trailing heatmap span, aligned to Monday-start weeks. */
+function activityCalendar(span: HeatSpan, days: readonly DailyTokenUsageRecord[], now = Date.now()): ActivityCell[] {
+  const dates = datesEndingOn(now, span)
   if (dates.length === 0) return []
   const byDate = new Map(days.map(day => [day.date, day]))
   const today = dayKey(now)
@@ -378,18 +382,51 @@ function activityCalendar(dates: readonly string[], days: readonly DailyTokenUsa
   return cells
 }
 
-/** Render a GitHub-style calendar heatmap of daily request activity for the selected range. */
+/** Render a fixed-size, span-switchable calendar heatmap of daily request activity. */
 function ActivityHeatmap({
-  dates,
+  span,
+  onSpanChange,
   days,
   t,
 }: {
-  dates: readonly string[]
+  span: HeatSpan
+  onSpanChange(span: HeatSpan): void
   days: readonly DailyTokenUsageRecord[]
   t: TokenUsageSectionProps['t']
 }): ReactNode {
-  const calendar = useMemo(() => activityCalendar(dates, days), [dates, days])
-  const columns = Math.max(1, Math.ceil(calendar.length / 7))
+  const calendar = useMemo(() => activityCalendar(span, days), [span, days])
+  const weeks = Math.max(1, Math.ceil(calendar.length / 7))
+  const monthFormatter = useMemo(() => new Intl.DateTimeFormat(undefined, { month: 'short' }), [])
+  const monthAt = (week: number): string | undefined => {
+    const cell = calendar[week * 7]
+    if (cell === undefined || cell.empty || cell.date === '') return undefined
+    return monthFormatter.format(new Date(`${cell.date}T00:00:00.000Z`))
+  }
+  const renderCell = (cell: ActivityCell, key: string): ReactNode => {
+    if (cell.empty) {
+      return <span key={key} className={css.activityCell} data-empty="true" role="gridcell" />
+    }
+    const details = t('activityTooltip', {
+      date: cell.date,
+      requests: formatTokens(cell.requests),
+      total: formatTokens(cell.tokens),
+      input: formatTokens(inputTokens(cell.usage)),
+      output: formatTokens(cell.usage.outputTokens),
+      cacheRead: formatTokens(cell.usage.cacheReadTokens),
+      cacheWrite: formatTokens(cell.usage.cacheWriteTokens),
+    })
+    return (
+      <button
+        key={key}
+        className={css.activityCell}
+        type="button"
+        role="gridcell"
+        data-level={cell.level}
+        {...{ title: details, 'aria-label': details }}
+      />
+    )
+  }
+  const weekdays = t('weekdays').split(',')
   return (
     <div className={css.activity}>
       <div className={css.activityHead}>
@@ -397,37 +434,37 @@ function ActivityHeatmap({
           <h3>{t('activity')}</h3>
           <p>{t('activityIntro')}</p>
         </div>
+        <div className={css.rangeTabs} aria-label={t('activity')}>
+          {([90, 180, 365] as const).map(value => (
+            <button
+              key={value}
+              type="button"
+              aria-pressed={span === value}
+              onClick={() => { onSpanChange(value) }}
+            >{value === 365 ? t('heatYear') : value === 180 ? t('heatHalfYear') : t('heatRangeDays', { count: value })}</button>
+          ))}
+        </div>
+      </div>
+      <div className={css.activityMatrix} style={{ gridTemplateColumns: `26px repeat(${weeks}, minmax(0, 1fr))` }} role="grid" aria-label={t('activity')}>
+        <span className={css.activityGutter} />
+        {Array.from({ length: weeks }, (_, week) => {
+          const label = monthAt(week)
+          const previous = week > 0 ? monthAt(week - 1) : undefined
+          return <span key={`month-${week}`} className={css.activityMonth}>{label !== undefined && label !== previous ? label : ''}</span>
+        })}
+        {weekdays.map((weekday, row) => (
+          <Fragment key={weekday}>
+            <span className={css.activityWeekday}>{row % 2 === 0 ? weekday : ''}</span>
+            {Array.from({ length: weeks }, (_, week) => renderCell(calendar[week * 7 + row]!, `${week}-${row}`))}
+          </Fragment>
+        ))}
+      </div>
+      <div className={css.activityFooter}>
         <div className={css.activityLegend} aria-label={t('activity')}>
           <span>{t('less')}</span>
           {[0, 1, 2, 3, 4].map(level => <i key={level} data-level={level} />)}
           <span>{t('more')}</span>
         </div>
-      </div>
-      <div className={css.activityGrid} style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }} role="grid" aria-label={t('activity')}>
-        {calendar.map((day, index) => {
-          if (day.empty) {
-            return <span key={`empty-${index}`} className={css.activityCell} data-empty="true" role="gridcell" />
-          }
-          const details = t('activityTooltip', {
-            date: day.date,
-            requests: formatTokens(day.requests),
-            total: formatTokens(day.tokens),
-            input: formatTokens(inputTokens(day.usage)),
-            output: formatTokens(day.usage.outputTokens),
-            cacheRead: formatTokens(day.usage.cacheReadTokens),
-            cacheWrite: formatTokens(day.usage.cacheWriteTokens),
-          })
-          return (
-            <button
-              key={day.date}
-              className={css.activityCell}
-              type="button"
-              role="gridcell"
-              data-level={day.level}
-              {...{ title: details, 'aria-label': details }}
-            />
-          )
-        })}
       </div>
     </div>
   )
@@ -729,6 +766,7 @@ export function TokenUsageSection({
   const [selection, setSelection] = useState<RangeSelection>({ kind: 'preset', days: 30 })
   const [draft, setDraft] = useState<{ start: string; end: string }>(() => defaultCustomDraft())
   const [customError, setCustomError] = useState(false)
+  const [heatSpan, setHeatSpan] = useState<HeatSpan>(90)
 
   const data = useMemo(
     () => aggregateUsage(ids.map(id => byId[id]).filter((value): value is SessionSummary => value !== undefined)),
@@ -794,7 +832,7 @@ export function TokenUsageSection({
             <Metric label={t('activeDays')} value={`${period.activeDays}/${dates.length}`} />
           </div>
 
-          <ActivityHeatmap dates={dates} days={data.days} t={t} />
+          <ActivityHeatmap span={heatSpan} onSpanChange={setHeatSpan} days={data.days} t={t} />
           <ModelTable models={scopedModels} t={t} />
           <TokensChart records={period.records} allDates={dates} rangeLabel={rangeLabel} t={t} />
         </>

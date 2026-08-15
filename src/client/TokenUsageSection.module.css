@@ -118,6 +118,45 @@
   padding: 2px;
 }
 
+/* Heatmap matrix: fixed-height calendar with month row and weekday gutter.
+   Cells stay square (max 30px); when many weeks exceed the container width,
+   cells shrink to keep the block height constant. */
+.activityMatrix {
+  display: grid;
+  gap: 3px;
+  align-items: center;
+  justify-items: center;
+  grid-template-rows: 20px repeat(7, 30px);
+  margin-top: 8px;
+}
+
+.activityGutter {
+  /* top-left corner spacer */
+}
+
+.activityMonth {
+  width: 100%;
+  font-size: 10px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-tertiary);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.activityWeekday {
+  font-size: 10px;
+  line-height: 30px;
+  color: var(--dsw-alias-label-tertiary);
+  text-align: center;
+}
+
+.activityFooter {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+
 .activityCell,
 .activityLegend i {
   display: block;
@@ -129,6 +168,7 @@
 
 .activityCell {
   width: 100%;
+  max-width: 30px;
   min-width: 0;
   padding: 0;
   aspect-ratio: 1;
