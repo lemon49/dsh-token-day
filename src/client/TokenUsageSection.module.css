@@ -193,6 +193,7 @@
   cursor: default;
 }
 
+/* Blue gradient heatmap levels. */
 .activityCell[data-level='1'],
 .activityLegend i[data-level='1'] {
   background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 22%, var(--dsw-alias-bg-module-platform));

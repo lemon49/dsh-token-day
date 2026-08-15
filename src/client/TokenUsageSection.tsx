@@ -766,7 +766,7 @@ export function TokenUsageSection({
   const [selection, setSelection] = useState<RangeSelection>({ kind: 'preset', days: 30 })
   const [draft, setDraft] = useState<{ start: string; end: string }>(() => defaultCustomDraft())
   const [customError, setCustomError] = useState(false)
-  const [heatSpan, setHeatSpan] = useState<HeatSpan>(90)
+  const [heatSpan, setHeatSpan] = useState<HeatSpan>(365)
 
   const data = useMemo(
     () => aggregateUsage(ids.map(id => byId[id]).filter((value): value is SessionSummary => value !== undefined)),
