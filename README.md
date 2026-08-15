@@ -50,7 +50,7 @@ dsh web
 dsh plugin --profile web add github:lemon49/dsh-token-day
 ```
 
-git 安装会自动运行 `prepare` 脚本构建（需在 profile 的 `pnpm-workspace.yaml` 中为该包授权 `allowBuilds`）。
+安装后重启 `dsh web` 即可使用。仓库已提交构建产物 `lib/`，无需任何构建授权。
 
 ## 构建
 

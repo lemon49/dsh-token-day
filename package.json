@@ -46,7 +46,6 @@
   },
   "scripts": {
     "build": "tsdown --config tsdown.config.ts",
-    "prepare": "tsdown --config tsdown.config.ts",
     "typecheck:host": "tsc -p tsconfig.host.json --noEmit",
     "typecheck:client": "tsc -p tsconfig.client.json --noEmit",
     "typecheck": "npm run typecheck:host && npm run typecheck:client"
