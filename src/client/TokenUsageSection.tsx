@@ -14,6 +14,14 @@ import css from './TokenUsageSection.module.css'
 export type TokenUsageSectionProps = PropsRuntime<'settings.section'>
   & PropsLocale<typeof NS>
 
+/** Preset trailing-window sizes in UTC days. */
+type PresetDays = 1 | 3 | 7 | 30 | 90
+
+/** Selected date range: a preset trailing window or an explicit custom span. */
+type RangeSelection =
+  | { kind: 'preset'; days: PresetDays }
+  | { kind: 'custom'; start: string; end: string }
+
 interface SessionUsageRow {
   id: string
   assistantRequests: number
@@ -205,7 +213,7 @@ export function aggregateUsage(summaries: readonly SessionSummary[]): DashboardD
   }
 }
 
-/** Build a newest-inclusive UTC date range. */
+/** Build a newest-inclusive UTC date range of `length` days. */
 function datesEndingOn(now: number, length: number): string[] {
   const end = new Date(`${dayKey(now)}T00:00:00.000Z`)
   end.setUTCDate(end.getUTCDate() - length + 1)
@@ -218,8 +226,43 @@ function datesEndingOn(now: number, length: number): string[] {
   return dates
 }
 
+/** Build an inclusive UTC date span, oldest first; empty when invalid. */
+function datesBetween(startIso: string, endIso: string): string[] {
+  const start = new Date(`${startIso}T00:00:00.000Z`)
+  const end = new Date(`${endIso}T00:00:00.000Z`)
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) return []
+  const dates: string[] = []
+  for (const cursor = new Date(start); cursor <= end; cursor.setUTCDate(cursor.getUTCDate() + 1)) {
+    dates.push(dayKey(cursor.getTime()))
+  }
+  return dates
+}
+
+/** Expand the active selection into an ordered date list, oldest first. */
+function datesInRange(selection: RangeSelection, now = Date.now()): string[] {
+  return selection.kind === 'preset'
+    ? datesEndingOn(now, selection.days)
+    : datesBetween(selection.start, selection.end)
+}
+
+/** Default custom-range draft: the trailing 7 days. */
+function defaultCustomDraft(now = Date.now()): { start: string; end: string } {
+  const end = dayKey(now)
+  const start = new Date(`${end}T00:00:00.000Z`)
+  start.setUTCDate(start.getUTCDate() - 6)
+  return { start: dayKey(start.getTime()), end }
+}
+
+/** Human label for the active selection. */
+function rangeLabelOf(selection: RangeSelection, t: TokenUsageSectionProps['t']): string {
+  if (selection.kind === 'custom') return t('customRange')
+  if (selection.days === 1) return t('today')
+  if (selection.days === 3) return t('day3')
+  return t('rangeDays', { count: selection.days })
+}
+
 /** Aggregate one fixed UTC date range from a daily lookup. */
-function rangeAggregate(days: readonly DailyTokenUsageRecord[], range: number, now = Date.now()): {
+function rangeAggregate(days: readonly DailyTokenUsageRecord[], dates: readonly string[]): {
   requests: number
   billed: number
   usage: TokenUsageBuckets
@@ -232,7 +275,7 @@ function rangeAggregate(days: readonly DailyTokenUsageRecord[], range: number, n
   let usage = zeroBuckets()
   let activeDays = 0
   const records: DailyTokenUsageRecord[] = []
-  for (const date of datesEndingOn(now, range)) {
+  for (const date of dates) {
     const day = byDate.get(date)
     if (day === undefined) continue
     const dayRequests = day.requests.assistant + day.requests.compaction
@@ -245,9 +288,8 @@ function rangeAggregate(days: readonly DailyTokenUsageRecord[], range: number, n
   return { requests, billed, usage, activeDays, records }
 }
 
-/** Aggregate one fixed UTC date range across model routes. */
-function rangeModels(models: readonly ModelTokenUsageRecord[], range: number, now = Date.now()): ModelTokenUsageRecord[] {
-  const dates = new Set(datesEndingOn(now, range))
+/** Aggregate model routes scoped to one UTC date span. */
+function rangeModels(models: readonly ModelTokenUsageRecord[], dateSet: ReadonlySet<string>): ModelTokenUsageRecord[] {
   const result: ModelTokenUsageRecord[] = []
   for (const model of models) {
     let assistant = 0
@@ -256,7 +298,7 @@ function rangeModels(models: readonly ModelTokenUsageRecord[], range: number, no
     let usage = zeroBuckets()
     let hasAny = false
     for (const day of model.days) {
-      if (!dates.has(day.date)) continue
+      if (!dateSet.has(day.date)) continue
       hasAny = true
       assistant += day.requests.assistant
       compaction += day.requests.compaction
@@ -292,53 +334,62 @@ function Metric({ label, value }: { label: string; value: number | string }): Re
   )
 }
 
-interface ActivityDay {
+interface ActivityCell {
   date: string
   requests: number
   tokens: number
   usage: TokenUsageBuckets
   level: 0 | 1 | 2 | 3 | 4
-  future: boolean
+  empty: boolean
 }
 
-/** Build exactly 30 Monday-first calendar weeks, including blank future days this week. */
-function activityCalendar(days: readonly DailyTokenUsageRecord[], now = Date.now()): ActivityDay[] {
+/** Build calendar cells for the selected date span, aligned to Monday-start weeks. */
+function activityCalendar(dates: readonly string[], days: readonly DailyTokenUsageRecord[], now = Date.now()): ActivityCell[] {
+  if (dates.length === 0) return []
   const byDate = new Map(days.map(day => [day.date, day]))
   const today = dayKey(now)
-  const end = new Date(`${today}T00:00:00.000Z`)
-  const start = new Date(end)
-  start.setUTCDate(start.getUTCDate() - ((start.getUTCDay() + 6) % 7) - 29 * 7)
-
-  const dates: string[] = []
-  for (const cursor = new Date(start); dates.length < 30 * 7; cursor.setUTCDate(cursor.getUTCDate() + 1)) {
-    dates.push(dayKey(cursor.getTime()))
-  }
+  const first = new Date(`${dates[0]}T00:00:00.000Z`)
+  const leading = (first.getUTCDay() + 6) % 7
   const maximum = Math.max(0, ...dates
     .filter(date => date <= today)
     .map(date => {
       const day = byDate.get(date)
       return day === undefined ? 0 : day.requests.assistant + day.requests.compaction
     }))
-  return dates.map((date) => {
-    const future = date > today
+  const cells: ActivityCell[] = []
+  for (let index = 0; index < leading; index += 1) {
+    cells.push({ date: '', requests: 0, tokens: 0, usage: zeroBuckets(), level: 0, empty: true })
+  }
+  for (const date of dates) {
+    if (date > today) {
+      cells.push({ date: '', requests: 0, tokens: 0, usage: zeroBuckets(), level: 0, empty: true })
+      continue
+    }
     const day = byDate.get(date)
-    const requests = future ? 0 : day === undefined ? 0 : day.requests.assistant + day.requests.compaction
-    const tokens = future ? 0 : day === undefined ? 0 : totalTokens(day.usage)
-    const usage = future ? zeroBuckets() : day === undefined ? zeroBuckets() : { ...day.usage }
-    const level = requests === 0 || maximum === 0 ? 0 : Math.ceil(requests / maximum * 4) as ActivityDay['level']
-    return { date, requests, tokens, usage, level, future }
-  })
+    const requests = day === undefined ? 0 : day.requests.assistant + day.requests.compaction
+    const usage = day === undefined ? zeroBuckets() : { ...day.usage }
+    const tokens = day === undefined ? 0 : totalTokens(day.usage)
+    const level = requests === 0 || maximum === 0 ? 0 : Math.ceil(requests / maximum * 4) as ActivityCell['level']
+    cells.push({ date, requests, tokens, usage, level, empty: false })
+  }
+  while (cells.length % 7 !== 0) {
+    cells.push({ date: '', requests: 0, tokens: 0, usage: zeroBuckets(), level: 0, empty: true })
+  }
+  return cells
 }
 
-/** Render a GitHub-style calendar heatmap of daily request activity. */
+/** Render a GitHub-style calendar heatmap of daily request activity for the selected range. */
 function ActivityHeatmap({
+  dates,
   days,
   t,
 }: {
+  dates: readonly string[]
   days: readonly DailyTokenUsageRecord[]
   t: TokenUsageSectionProps['t']
 }): ReactNode {
-  const calendar = useMemo(() => activityCalendar(days), [days])
+  const calendar = useMemo(() => activityCalendar(dates, days), [dates, days])
+  const columns = Math.max(1, Math.ceil(calendar.length / 7))
   return (
     <div className={css.activity}>
       <div className={css.activityHead}>
@@ -352,9 +403,12 @@ function ActivityHeatmap({
           <span>{t('more')}</span>
         </div>
       </div>
-      <div className={css.activityGrid} role="grid" aria-label={t('activity')}>
-        {calendar.map((day) => {
-          const details = day.future ? undefined : t('activityTooltip', {
+      <div className={css.activityGrid} style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }} role="grid" aria-label={t('activity')}>
+        {calendar.map((day, index) => {
+          if (day.empty) {
+            return <span key={`empty-${index}`} className={css.activityCell} data-empty="true" role="gridcell" />
+          }
+          const details = t('activityTooltip', {
             date: day.date,
             requests: formatTokens(day.requests),
             total: formatTokens(day.tokens),
@@ -370,9 +424,7 @@ function ActivityHeatmap({
               type="button"
               role="gridcell"
               data-level={day.level}
-              data-future={day.future ? 'true' : undefined}
-              disabled={day.future}
-              {...details === undefined ? {} : { title: details, 'aria-label': details }}
+              {...{ title: details, 'aria-label': details }}
             />
           )
         })}
@@ -419,7 +471,7 @@ function ModelTable({
                           ? <strong>{t('unknownRoute')}</strong>
                           : <strong>{model.model}</strong>}
                       </td>
-                      <td>{model.provider}</td>
+                      <td><span className={css.providerCell}>{model.provider}</span></td>
                       <td>{formatTokens(recordedRequests(model))}</td>
                       <td>{formatTokens(model.billedRequests)}</td>
                       <td><span className={css.tokenValue} title={formatTokens(totalTokens(model.usage))}>{formatCompactTokens(totalTokens(model.usage))}</span></td>
@@ -476,24 +528,27 @@ function niceMaximum(value: number): number {
 
 /** Format one ISO date as M/D without leading zeros (official style). */
 function shortDate(iso: string): string {
-  const [year, month, day] = iso.split('-')
+  const [, month, day] = iso.split('-')
   return `${Number(month)}/${Number(day)}`
 }
 
 /** Render the stacked daily Tokens bar chart (cache hit / cache miss / output). */
 function TokensChart({
   records,
+  allDates,
   rangeLabel,
   t,
 }: {
   records: readonly DailyTokenUsageRecord[]
+  allDates: readonly string[]
   rangeLabel: string
   t: TokenUsageSectionProps['t']
 }): ReactNode {
   const slices = useMemo(() => tokenSlices(records), [records])
+  const sliceByDate = useMemo(() => new Map(slices.map(slice => [slice.date, slice])), [slices])
   const [hovered, setHovered] = useState<number>()
   const total = slices.reduce((sum, slice) => sum + slice.total, 0)
-  if (slices.length === 0) {
+  if (allDates.length === 0 || slices.length === 0) {
     return <div className={css.block}><h3>{t('tokensChart')}</h3><p className={css.status}>{t('empty')}</p></div>
   }
   const maximum = niceMaximum(Math.max(...slices.map(slice => slice.total)))
@@ -505,11 +560,11 @@ function TokensChart({
   const padLeft = 56
   const plotWidth = width - padLeft - padRight
   const plotHeight = height - padTop - padBottom
-  const column = plotWidth / slices.length
+  const column = plotWidth / allDates.length
   const barWidth = Math.min(52, Math.max(4, column * 0.68))
   const axisTicks = [0, 0.5, 1].map(ratio => maximum * ratio)
   const y = (value: number): number => padTop + plotHeight * (1 - value / maximum)
-  const labelEvery = Math.max(1, Math.ceil(slices.length / 7))
+  const labelEvery = Math.max(1, Math.ceil(allDates.length / 7))
   return (
     <div className={css.block}>
       <div className={css.blockHead}>
@@ -518,7 +573,7 @@ function TokensChart({
           <p>{t('tokensChartIntro')}</p>
         </div>
         <span className={css.chartTotalBlock}>
-          <span className={css.chartTotalLabel}>{t('chartRange', { range: rangeLabel })}</span>
+          <span className={css.chartTotalLabel}>{rangeLabel}</span>
           <strong className={css.chartTotal} title={formatTokens(total)}>{formatTokens(total)}</strong>
         </span>
       </div>
@@ -542,12 +597,13 @@ function TokensChart({
               </text>
             </g>
           ))}
-          {slices.map((slice, index) => {
+          {allDates.map((date, index) => {
+            const slice = sliceByDate.get(date)
             const x = padLeft + column * index + (column - barWidth) / 2
             const hover = hovered === index
             return (
               <g
-                key={slice.date}
+                key={date}
                 onMouseEnter={() => { setHovered(index) }}
                 onMouseLeave={() => { setHovered(undefined) }}
               >
@@ -558,14 +614,14 @@ function TokensChart({
                   height={plotHeight}
                   fill="transparent"
                 />
-                {slice.total > 0 ? <>
+                {slice !== undefined && slice.total > 0 ? <>
                   <rect x={x} y={y(slice.output)} width={barWidth} height={y(0) - y(slice.output)} className={css.barOutput} />
                   <rect x={x} y={y(slice.output + slice.miss)} width={barWidth} height={y(slice.output) - y(slice.output + slice.miss)} className={css.barMiss} />
                   <rect x={x} y={y(slice.total)} width={barWidth} height={y(slice.output + slice.miss) - y(slice.total)} className={css.barHit} />
                 </> : null}
                 {index % labelEvery === 0 ? (
                   <text x={padLeft + column * index + column / 2} y={height - 8} textAnchor="middle" className={css.chartAxisLabel}>
-                    {shortDate(slice.date)}
+                    {shortDate(date)}
                   </text>
                 ) : null}
                 {hover ? <rect
@@ -580,7 +636,8 @@ function TokensChart({
           })}
         </svg>
         {hovered === undefined ? null : (() => {
-          const slice = slices[hovered]
+          const slice = sliceByDate.get(allDates[hovered]!)
+          if (slice === undefined) return null
           return (
             <div className={css.chartTooltip} style={{ left: `${(padLeft + column * hovered + column / 2) / width * 100}%` }}>
               <strong>{shortDate(slice.date)}</strong>
@@ -596,6 +653,71 @@ function TokensChart({
   )
 }
 
+/** Render the preset tabs plus the custom date-range picker. */
+function RangeControls({
+  selection,
+  draft,
+  onSelect,
+  onDraftChange,
+  onApply,
+  onReset,
+  error,
+  t,
+}: {
+  selection: RangeSelection
+  draft: { start: string; end: string }
+  onSelect(selection: RangeSelection): void
+  onDraftChange(draft: { start: string; end: string }): void
+  onApply(): void
+  onReset(): void
+  error: boolean
+  t: TokenUsageSectionProps['t']
+}): ReactNode {
+  const presets: PresetDays[] = [1, 3, 7, 30, 90]
+  return (
+    <>
+      <div className={css.rangeTabs} aria-label={t('customRange')}>
+        {presets.map(days => {
+          const active = selection.kind === 'preset' && selection.days === days
+          const label = days === 1 ? t('today') : days === 3 ? t('day3') : t('rangeDays', { count: days })
+          return (
+            <button
+              key={days}
+              type="button"
+              aria-pressed={active}
+              onClick={() => { onSelect({ kind: 'preset', days }) }}
+            >{label}</button>
+          )
+        })}
+        <button
+          type="button"
+          aria-pressed={selection.kind === 'custom'}
+          onClick={() => { onSelect({ kind: 'custom', start: draft.start, end: draft.end }) }}
+        >{t('customRange')}</button>
+      </div>
+      {selection.kind === 'custom' ? (
+        <div className={css.rangeCustom}>
+          <label>
+            <span>{t('startDate')}</span>
+            <input type="date" value={draft.start} onChange={(event) => {
+              onDraftChange({ ...draft, start: event.currentTarget.value })
+            }} />
+          </label>
+          <label>
+            <span>{t('endDate')}</span>
+            <input type="date" value={draft.end} onChange={(event) => {
+              onDraftChange({ ...draft, end: event.currentTarget.value })
+            }} />
+          </label>
+          <button type="button" className={css.rangeApply} onClick={onApply}>{t('applyRange')}</button>
+          <button type="button" className={css.rangeReset} onClick={onReset}>{t('resetRange')}</button>
+          {error ? <span className={css.rangeError}>{t('invalidRange')}</span> : null}
+        </div>
+      ) : null}
+    </>
+  )
+}
+
 /** Render durable Token billing across all listed sessions. */
 export function TokenUsageSection({
   useSessions,
@@ -604,15 +726,33 @@ export function TokenUsageSection({
   const phase = useSessions(state => state.phase)
   const ids = useSessions(state => state.ids)
   const byId = useSessions(state => state.byId)
-  const [range, setRange] = useState<1 | 7 | 30 | 90>(30)
+  const [selection, setSelection] = useState<RangeSelection>({ kind: 'preset', days: 30 })
+  const [draft, setDraft] = useState<{ start: string; end: string }>(() => defaultCustomDraft())
+  const [customError, setCustomError] = useState(false)
 
   const data = useMemo(
     () => aggregateUsage(ids.map(id => byId[id]).filter((value): value is SessionSummary => value !== undefined)),
     [byId, ids],
   )
-  const period = useMemo(() => rangeAggregate(data.days, range), [data.days, range])
-  const scopedModels = useMemo(() => rangeModels(data.models, range), [data.models, range])
-  const rangeLabel = range === 1 ? t('today') : t('rangeDays', { count: range })
+  const dates = useMemo(() => datesInRange(selection), [selection])
+  const dateSet = useMemo(() => new Set(dates), [dates])
+  const period = useMemo(() => rangeAggregate(data.days, dates), [data.days, dates])
+  const scopedModels = useMemo(() => rangeModels(data.models, dateSet), [data.models, dateSet])
+  const rangeLabel = rangeLabelOf(selection, t)
+
+  const applyCustom = (): void => {
+    if (draft.start === '' || draft.end === '' || draft.start > draft.end) {
+      setCustomError(true)
+      return
+    }
+    setCustomError(false)
+    setSelection({ kind: 'custom', start: draft.start, end: draft.end })
+  }
+  const resetCustom = (): void => {
+    setCustomError(false)
+    setDraft(defaultCustomDraft())
+    setSelection({ kind: 'preset', days: 30 })
+  }
 
   if (phase !== 'ready' && ids.length === 0) {
     return <p className={css.status}>{t('loading')}</p>
@@ -629,28 +769,34 @@ export function TokenUsageSection({
 
       {data.days.length === 0 ? <p className={css.status}>{t('empty')}</p> : (
         <>
-          <div className={css.rangeTabs} aria-label={rangeLabel}>
-            {([1, 7, 30, 90] as const).map(value => (
-              <button
-                key={value}
-                type="button"
-                aria-pressed={range === value}
-                onClick={() => { setRange(value) }}
-              >{value === 1 ? t('today') : t('rangeDays', { count: value })}</button>
-            ))}
-          </div>
+          <RangeControls
+            selection={selection}
+            draft={draft}
+            onSelect={(next) => {
+              setCustomError(false)
+              setSelection(next)
+            }}
+            onDraftChange={(next) => {
+              setCustomError(false)
+              setDraft(next)
+            }}
+            onApply={applyCustom}
+            onReset={resetCustom}
+            error={customError}
+            t={t}
+          />
 
           <div className={css.metrics}>
             <Metric label={t('requests')} value={period.requests} />
             <Metric label={t('billed')} value={period.billed} />
             <Metric label={t('totalTokens')} value={totalTokens(period.usage)} />
             <Metric label={t('cacheHitTokens')} value={period.usage.cacheReadTokens} />
-            <Metric label={t('activeDays')} value={range === 1 ? `${period.activeDays}/1` : `${period.activeDays}/${range}`} />
+            <Metric label={t('activeDays')} value={`${period.activeDays}/${dates.length}`} />
           </div>
 
-          <ActivityHeatmap days={data.days} t={t} />
+          <ActivityHeatmap dates={dates} days={data.days} t={t} />
           <ModelTable models={scopedModels} t={t} />
-          <TokensChart records={period.records} rangeLabel={rangeLabel} t={t} />
+          <TokensChart records={period.records} allDates={dates} rangeLabel={rangeLabel} t={t} />
         </>
       )}
     </section>

@@ -824,31 +824,42 @@
   }
 }
 
-/* Model share progress bar. */
-.shareCell {
+/* Model share progress bar — prefixed to win over the generic .tableWrap td span rules. */
+.modelTable td .providerCell,
+.modelTable td .tokenValue {
+  display: inline-block;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.modelTable td .shareCell {
   display: inline-flex;
   align-items: center;
   gap: 8px;
   min-width: 120px;
+  max-width: none;
+  overflow: visible;
 }
 
-.shareBar {
+.modelTable td .shareBar {
   display: inline-block;
   width: 72px;
   height: 6px;
   border-radius: 3px;
   background: var(--dsw-alias-bg-module-platform);
   overflow: hidden;
+  max-width: none;
 }
 
-.shareBar i {
+.modelTable td .shareBar i {
   display: block;
   height: 100%;
   border-radius: 3px;
   background: var(--dsw-alias-brand-primary, #4d6bfe);
 }
 
-.shareCell em {
+.modelTable td .shareCell em {
   font-style: normal;
   color: var(--dsw-alias-label-tertiary);
   font-size: 11px;
@@ -994,4 +1005,79 @@
   color: var(--dsw-alias-label-primary);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
+}
+
+/* Heatmap empty alignment cells. */
+.activityCell[data-empty='true'] {
+  background: transparent;
+  cursor: default;
+}
+
+/* Custom date-range controls. */
+.rangeCustom {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 4px 0 12px;
+}
+
+.rangeCustom label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.rangeCustom input[type='date'] {
+  padding: 5px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-module-platform);
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+}
+
+.rangeCustom input[type='date']:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 1px;
+}
+
+.rangeApply,
+.rangeReset {
+  padding: 5px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-module-platform);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.rangeApply:hover,
+.rangeReset:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.rangeApply {
+  border-color: transparent;
+  background: var(--dsw-alias-brand-primary, #4d6bfe);
+  color: #fff;
+}
+
+.rangeApply:hover {
+  opacity: 0.9;
+}
+
+.rangeError {
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+/* Table header visual continuity. */
+.tableWrap thead th {
+  background: var(--dsw-alias-bg-layer-2);
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
 }
