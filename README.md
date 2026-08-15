@@ -1,0 +1,95 @@
+# dsh-token-day
+
+DeepSeek Harness（DSH）的 Token 用量与计费统计插件。基于 DSH 持久会话日志统计模型请求与 Token 用量，在 Web 设置页提供用量看板。
+
+> 本项目由 [dsh-token-usage](https://github.com/LeemanCheung/dsh-token-usage) 改造而来，保留其持久化投影机制，按参考设计重做页面并精简冗余模块。
+
+## 功能特性
+
+- **顶部统计卡**：请求总数、已计量、Token 总数、缓存命中 Token、覆盖率、活跃天数，支持 7 / 30 / 90 天范围切换
+- **每日活动热力图**：最近 30 周每日请求活跃度，悬停查看当日 Token 明细
+- **模型板块**：展示全部已记录模型路由（模型 / 提供方 / 请求数 / 已计量 / Token 数 / 占比进度条），支持搜索过滤
+- **Tokens 堆叠柱状图**：按天展示输入（命中缓存 / 未命中缓存）与输出 Token，悬停查看当日三段明细
+- **数据口径**：四桶 Token（uncachedInput / output / cacheRead / cacheWrite）；billed = 产生非零 usage 的请求；覆盖率 = billed / 请求总数
+
+## 安装
+
+### 方式一：本地目录引用（开发调试）
+
+在 web profile（`~/.dsh/profiles/web`）中：
+
+1. 编辑 `package.json`：
+
+```json
+{
+  "dependencies": {
+    "dsh-token-day": "link:D:/codex/dsh-token-day"
+  },
+  "dsh": {
+    "profile": {
+      "bundles": [
+        "@deepseek-ai/dsh-base",
+        "@deepseek-ai/dsh-web-app",
+        "dsh-token-day"
+      ]
+    }
+  }
+}
+```
+
+2. 安装并重启：
+
+```sh
+pnpm install
+dsh web
+```
+
+### 方式二：GitHub 安装
+
+```sh
+dsh plugin --profile web add github:lemon49/dsh-token-day
+```
+
+git 安装会自动运行 `prepare` 脚本构建（需在 profile 的 `pnpm-workspace.yaml` 中为该包授权 `allowBuilds`）。
+
+## 构建
+
+```sh
+pnpm install
+pnpm build          # 产出 lib/index.js（Host）与 lib/client.js（Client bundle）
+pnpm typecheck      # host + client 类型检查
+```
+
+## 使用
+
+1. 启动 DSH Web（`dsh web`），打开 http://127.0.0.1:3080
+2. 进入 **设置 → Token 用量**
+3. 首次启用时，插件会回放历史会话以重建用量投影（数据量大时后台渐进完成）
+
+## 目录结构
+
+```
+dsh-token-day/
+├── src/
+│   ├── index.ts                 # Host 插件入口：投影注册 + 历史回放
+│   ├── projection.ts            # tokenDay 投影（按模型/按天聚合，含请求计数）
+│   ├── types.ts                 # 类型定义与 SessionProjectionMap 增强
+│   └── client/
+│       ├── index.ts             # Client 入口：设置页 slot 注册
+│       ├── TokenUsageSection.tsx# 看板组件（统计卡/热力图/模型表/柱状图）
+│       ├── locales.ts           # zh / en 文案
+│       └── TokenUsageSection.module.css
+├── tsdown.config.ts             # 自包含构建配置（含 CSS Modules 内联）
+├── cordis.patch.yml             # bundle 层：挂载插件行
+└── docs/PLAN.md                 # 改造计划文档
+```
+
+## 数据说明
+
+- 全部数据来自 DSH 会话事件（`assistant/chunk`、`assistant/message`、`compaction/summary` 等），**不保存提示词或回复正文**
+- 投影 key 为 `tokenDay`（stateVersion 7），与 `dsh-token-usage` 的 `tokenUsageRecorder` 互不冲突，可并存
+- 金额（消费金额/API 标价折算）相关展示不在本轮范围内，后续迭代补充
+
+## 许可证
+
+[MIT](LICENSE)
