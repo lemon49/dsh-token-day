@@ -452,9 +452,10 @@ interface TokenDaySlice {
   total: number
 }
 
-/** Build per-day three-segment slices from daily records. */
+/** Build per-day three-segment slices from daily records, oldest first (left = earliest, right = today). */
 function tokenSlices(records: readonly DailyTokenUsageRecord[]): TokenDaySlice[] {
-  return records.map(day => {
+  const sorted = records.slice().sort((left, right) => left.date.localeCompare(right.date))
+  return sorted.map(day => {
     const hit = day.usage.cacheReadTokens
     const miss = day.usage.uncachedInputTokens + day.usage.cacheWriteTokens
     const output = day.usage.outputTokens

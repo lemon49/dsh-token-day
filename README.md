@@ -1,20 +1,26 @@
 # dsh-token-day
 
-DeepSeek Harness（DSH）的 Token 用量与计费统计插件。基于 DSH 持久会话日志统计模型请求与 Token 用量，在 Web 设置页提供用量看板。
-
-> 本项目由 [dsh-token-usage](https://github.com/LeemanCheung/dsh-token-usage) 改造而来，保留其持久化投影机制，按参考设计重做页面并精简冗余模块。
+面向 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（DSH）的 Token 用量与计费统计插件。基于 DSH 持久会话日志统计模型请求与 Token 用量，在 Web 设置页提供可视化看板。
 
 ## 功能特性
 
 - **顶部统计卡**：请求总数、已计量、Token 总数、缓存命中 Token、活跃天数，支持**当日 / 7 天 / 30 天 / 90 天**范围切换
 - **每日活动热力图**：最近 30 周每日请求活跃度，悬停查看当日 Token 明细
 - **模型板块**：展示所选时间范围内全部模型路由（模型 / 提供方 / 请求数 / 已计量 / Token 数 / 占比进度条），随范围切换，模型多时表格可滚动
-- **Tokens 堆叠柱状图**：按天展示输入（命中缓存 / 未命中缓存）与输出 Token，顶部显示范围总量，悬停查看当日三段明细
+- **Tokens 堆叠柱状图**：按天展示输入（命中缓存 / 未命中缓存）与输出 Token；时间轴从左到右由远及近（最右为最新）；顶部显示范围总量，悬停查看当日三段明细
 - **数据口径**：四桶 Token（uncachedInput / output / cacheRead / cacheWrite）；billed = 产生非零 usage 的请求
 
 ## 安装
 
-### 方式一：本地目录引用（开发调试）
+### 方式一：GitHub 安装（推荐）
+
+```sh
+dsh plugin --profile web add github:lemon49/dsh-token-day
+```
+
+安装后重启 `dsh web` 即可使用。仓库已提交构建产物 `lib/`，无需任何构建授权。
+
+### 方式二：本地目录引用（开发调试）
 
 在 web profile（`~/.dsh/profiles/web`）中：
 
@@ -44,17 +50,9 @@ pnpm install
 dsh web
 ```
 
-### 方式二：GitHub 安装
-
-```sh
-dsh plugin --profile web add github:lemon49/dsh-token-day
-```
-
-安装后重启 `dsh web` 即可使用。仓库已提交构建产物 `lib/`，无需任何构建授权。
-
 ## 更新
 
-插件通过 dsh 命令更新（转发给 pnpm 更新 git 依赖到最新提交）：
+通过 dsh 命令更新到最新提交：
 
 ```sh
 dsh plugin --profile web update dsh-token-day
@@ -62,7 +60,7 @@ dsh plugin --profile web update dsh-token-day
 dsh plugin --profile web add github:lemon49/dsh-token-day
 ```
 
-更新后重启 `dsh web` 生效。更新到包含新版本投影结构的版本后，插件会自动重建历史用量投影（首次耗时与历史会话量相关，后台渐进完成）。
+更新后重启 `dsh web` 生效。若新版本变更了投影结构，插件会自动回放历史会话重建用量投影（耗时与历史会话量相关，后台渐进完成）。
 
 ## 构建
 
@@ -99,7 +97,7 @@ dsh-token-day/
 ## 数据说明
 
 - 全部数据来自 DSH 会话事件（`assistant/chunk`、`assistant/message`、`compaction/summary` 等），**不保存提示词或回复正文**
-- 投影 key 为 `tokenDay`（stateVersion 8），与 `dsh-token-usage` 的 `tokenUsageRecorder` 互不冲突，可并存
+- 投影 key 为 `tokenDay`（stateVersion 8）
 - 金额（消费金额/API 标价折算）相关展示不在本轮范围内，后续迭代补充
 
 ## 许可证
