@@ -106,52 +106,16 @@
   line-height: 17px;
 }
 
+/* Fixed one-year calendar grid: weeks as columns, Monday–Sunday as rows. */
 .activityGrid {
   display: grid;
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
   grid-auto-flow: column;
-  grid-template-columns: repeat(30, minmax(0, 1fr));
   grid-template-rows: repeat(7, minmax(0, 1fr));
   gap: 3px;
   padding: 2px;
-}
-
-/* Heatmap matrix: fixed-height calendar with month row and weekday gutter.
-   Cells fill their grid tracks exactly, so every cell has the same size. */
-.activityMatrix {
-  display: grid;
-  gap: 3px;
-  grid-template-rows: 20px repeat(7, 30px);
-  margin-top: 8px;
-}
-
-.activityGutter {
-  /* top-left corner spacer */
-}
-
-.activityMonth {
-  width: 100%;
-  font-size: 10px;
-  line-height: 20px;
-  color: var(--dsw-alias-label-tertiary);
-  text-align: center;
-  white-space: nowrap;
-  overflow: hidden;
-}
-
-.activityWeekday {
-  font-size: 10px;
-  line-height: 30px;
-  color: var(--dsw-alias-label-tertiary);
-  text-align: center;
-}
-
-.activityFooter {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 8px;
 }
 
 .activityCell,
@@ -164,13 +128,11 @@
 }
 
 .activityCell {
-  width: min(100%, 30px);
+  width: 100%;
   height: auto;
   min-width: 0;
   padding: 0;
   aspect-ratio: 1;
-  justify-self: center;
-  align-self: center;
   cursor: pointer;
 }
 
