@@ -343,9 +343,9 @@ interface ActivityCell {
   empty: boolean
 }
 
-/** Build calendar cells for a fixed one-year heatmap, aligned to Monday-start weeks. */
+/** Build calendar cells for a fixed 30-week heatmap, aligned to Monday-start weeks. */
 function activityCalendar(days: readonly DailyTokenUsageRecord[], now = Date.now()): ActivityCell[] {
-  const dates = datesEndingOn(now, 365)
+  const dates = datesEndingOn(now, 30 * 7)
   if (dates.length === 0) return []
   const byDate = new Map(days.map(day => [day.date, day]))
   const today = dayKey(now)
@@ -379,7 +379,7 @@ function activityCalendar(days: readonly DailyTokenUsageRecord[], now = Date.now
   return cells
 }
 
-/** Render the fixed one-year calendar heatmap of daily request activity. */
+/** Render the fixed 30-week calendar heatmap of daily request activity. */
 function ActivityHeatmap({
   days,
   t,
