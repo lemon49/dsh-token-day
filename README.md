@@ -1,6 +1,6 @@
 # dsh-token-day
 
-面向 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（DSH）的 Token 用量与计费统计插件。基于 DSH 持久会话日志统计模型请求与 Token 用量，在 Web 设置页提供可视化看板。
+面向 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（DSH）的 Token 用量与计费统计 + 会话管理插件。基于 DSH 持久会话日志统计模型请求与 Token 用量，在 Web 设置页提供可视化看板；同时提供"对话管理"页面，管理（归档/恢复）DSH 会话。
 
 ## 功能特性
 
@@ -9,6 +9,7 @@
 - **模型板块**：展示所选时间范围内全部模型路由（模型 / 提供方 / 请求数 / 已计量 / Token 数 / 占比进度条），随范围切换，模型多时表格可滚动
 - **Tokens 堆叠柱状图**：按天展示输入（命中缓存 / 未命中缓存）与输出 Token；时间轴从左到右由远及近（最右为最新）；顶部显示范围总量，悬停查看当日三段明细
 - **数据口径**：四桶 Token（uncachedInput / output / cacheRead / cacheWrite）；billed = 产生非零 usage 的请求
+- **会话管理（对话管理）**：设置页新增"对话管理"，左侧列出全部会话（标题 / session id / 时间戳），一键复制会话 id、归档（删除）到右侧"归档管理"；归档会话可随时恢复。归档集合持久化在本插件的私有存储域中，重启不丢失
 
 ## 安装
 
@@ -73,7 +74,7 @@ pnpm typecheck      # host + client 类型检查
 ## 使用
 
 1. 启动 DSH Web（`dsh web`），打开 http://127.0.0.1:3080
-2. 进入 **设置 → Token 用量**
+2. 进入 **设置 → Token 用量** 查看计费看板；**设置 → 对话管理** 管理会话与归档
 3. 首次启用时，插件会回放历史会话以重建用量投影（数据量大时后台渐进完成）
 
 ## 目录结构
@@ -81,14 +82,17 @@ pnpm typecheck      # host + client 类型检查
 ```
 dsh-token-day/
 ├── src/
-│   ├── index.ts                 # Host 插件入口：投影注册 + 历史回放
+│   ├── index.ts                 # Host 插件入口：投影注册 + 历史回放 + 会话归档
 │   ├── projection.ts            # tokenDay 投影（按模型/按天聚合，含请求计数）
+│   ├── session-archive.ts       # 会话归档存储域 + Web 路由（archived/archive/restore）
 │   ├── types.ts                 # 类型定义与 SessionProjectionMap 增强
 │   └── client/
-│       ├── index.ts             # Client 入口：设置页 slot 注册
+│       ├── index.ts             # Client 入口：设置页 slot 注册（Token 用量 + 对话管理）
 │       ├── TokenUsageSection.tsx# 看板组件（统计卡/热力图/模型表/柱状图）
+│       ├── SessionManagerSection.tsx # 对话管理组件（会话列表/归档/复制 id）
 │       ├── locales.ts           # zh / en 文案
-│       └── TokenUsageSection.module.css
+│       ├── TokenUsageSection.module.css
+│       └── SessionManagerSection.module.css
 ├── tsdown.config.ts             # 自包含构建配置（含 CSS Modules 内联）
 ├── cordis.patch.yml             # bundle 层：挂载插件行
 └── docs/PLAN.md                 # 改造计划文档
@@ -98,6 +102,7 @@ dsh-token-day/
 
 - 全部数据来自 DSH 会话事件（`assistant/chunk`、`assistant/message`、`compaction/summary` 等），**不保存提示词或回复正文**
 - 投影 key 为 `tokenDay`（stateVersion 8）
+- 会话归档集合保存在私有存储域 `dsh-token-day-session-archive`，通过 `GET /plugins/dsh-token-day/{archived,archive,restore}` 读写
 - 金额（消费金额/API 标价折算）相关展示不在本轮范围内，后续迭代补充
 
 ## 许可证

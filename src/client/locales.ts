@@ -91,3 +91,54 @@ export const en = {
   empty: 'No token usage has been recorded.',
   loading: 'Reading session usage…',
 } satisfies Record<TokenUsageLocaleKey, string>
+
+/**
+ * Conversation-manager dictionary namespace. Owned by the session management
+ * settings page registered alongside the Token dashboard.
+ */
+export const MANAGER_NS = 'settings.conversationManager'
+
+/** Simplified Chinese conversation-manager dictionary and key source of truth. */
+export const managerZh = {
+  nav: '对话管理',
+  title: '对话管理',
+  intro: '管理 DSH 会话：将对话归档（从列表隐藏），或在归档管理中恢复。归档状态保存在本插件的持久化存储中。',
+  refresh: '刷新',
+  conversations: '对话管理',
+  archived: '归档管理',
+  count: '共 {count} 个',
+  delete: '删除',
+  restore: '恢复',
+  loading: '正在加载会话列表…',
+  emptyConversations: '暂无会话',
+  emptyArchived: '暂无归档会话',
+  sessionIdLabel: 'session',
+  copyId: '复制 id',
+  copied: '已复制',
+  loadFailed: '加载归档列表失败：{message}',
+  opFailed: '操作失败：{message}',
+} satisfies Record<string, string>
+
+/** Conversation-manager locale key union. */
+export type ConversationManagerLocaleKey = keyof typeof managerZh
+
+/** English conversation-manager dictionary checked against the Chinese key set. */
+export const managerEn = {
+  nav: 'Conversations',
+  title: 'Conversation management',
+  intro: 'Manage DSH sessions: archive a conversation (hide it from the list) or restore it from the archive. Archive state lives in this plugin\'s durable storage.',
+  refresh: 'Refresh',
+  conversations: 'Conversations',
+  archived: 'Archive',
+  count: '{count} total',
+  delete: 'Delete',
+  restore: 'Restore',
+  loading: 'Loading session list…',
+  emptyConversations: 'No conversations',
+  emptyArchived: 'No archived conversations',
+  sessionIdLabel: 'session',
+  copyId: 'Copy id',
+  copied: 'Copied',
+  loadFailed: 'Failed to load archive list: {message}',
+  opFailed: 'Operation failed: {message}',
+} satisfies Record<ConversationManagerLocaleKey, string>
