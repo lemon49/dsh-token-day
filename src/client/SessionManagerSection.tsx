@@ -1,10 +1,13 @@
 /**
- * Conversation manager settings page: a two-column view of every DSH session
- * (title, session id, last-updated timestamp) with archive/restore actions.
+ * Conversation manager settings page: a two-column read-only view of every
+ * DSH session (title, session id, last-updated timestamp) with copy-id and
+ * export-archived-ids actions.
  *
- * The session list comes from the standard `useSessions` store; the archive
- * set lives in the plugin's durable Host domain, reached through three Web
- * routes (GET /plugins/dsh-token-day/{archived,archive,restore}).
+ * The session list comes from the standard `useSessions` store. The archive
+ * column is read-only: it merges the plugin's legacy archive set with the DSH
+ * native archive set (workspace registry), served by
+ * GET /plugins/dsh-token-day/archived. Archiving/deleting sessions is left to
+ * DSH itself; this page only displays and lets the user copy/export ids.
  */
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
@@ -20,47 +23,17 @@ export type SessionManagerSectionProps = PropsRuntime<'settings.section'>
 /** Route prefix served by the Host half of this plugin. */
 const ARCHIVE_BASE = '/plugins/dsh-token-day'
 
-/** Archive view: the merged archive set plus the ids the plugin can restore. */
-interface ArchiveState {
-  /** Plugin-owned ∪ DSH-native archived session ids (drives list filtering). */
-  archived: string[]
-  /** Plugin-owned ids only — the ones the restore action can remove. */
-  restorable: string[]
-}
-
-/** Fetch the archive view from the Host. */
-async function fetchArchivedIds(): Promise<ArchiveState> {
+/** Fetch the merged archive set (plugin legacy ∪ DSH native) from the Host. */
+async function fetchArchivedIds(): Promise<string[]> {
   const res = await fetch(`${ARCHIVE_BASE}/archived`, { cache: 'no-store' })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   const data: unknown = await res.json()
   if (typeof data !== 'object' || data === null) throw new Error('unexpected archive response')
   const archived = (data as { archivedSessionIds?: unknown }).archivedSessionIds
-  const restorable = (data as { restorableSessionIds?: unknown }).restorableSessionIds
-  const isStringArray = (value: unknown): value is string[] =>
-    Array.isArray(value) && value.every(id => typeof id === 'string')
-  if (!isStringArray(archived)) throw new Error('unexpected archive response')
-  return {
-    archived,
-    restorable: isStringArray(restorable) ? restorable : [],
+  if (!Array.isArray(archived) || archived.some(id => typeof id !== 'string')) {
+    throw new Error('unexpected archive response')
   }
-}
-
-/** Archive or restore one session through the Host route. */
-async function mutateArchive(action: 'archive' | 'restore', sessionId: string): Promise<void> {
-  const res = await fetch(`${ARCHIVE_BASE}/${action}?id=${encodeURIComponent(sessionId)}`, { cache: 'no-store' })
-  if (!res.ok) {
-    let message = `HTTP ${res.status}`
-    try {
-      const data: unknown = await res.json()
-      if (typeof data === 'object' && data !== null
-        && typeof (data as { error?: unknown }).error === 'string') {
-        message = (data as { error: string }).error
-      }
-    } catch {
-      // Keep the HTTP status message when the body is not JSON.
-    }
-    throw new Error(message)
-  }
+  return archived as string[]
 }
 
 /** Format an epoch-millis timestamp as YYYY/M/D HH:mm:ss in local time. */
@@ -71,18 +44,12 @@ function formatTime(value: number): string {
     + `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
 }
 
-/** One conversation/archive row: title, session id (with copy), timestamp, and optional action button. */
+/** One conversation row: title, session id (with copy), timestamp. */
 function SessionRow({
   summary,
-  busy,
-  actionLabel,
-  onAction,
   t,
 }: {
   summary: SessionSummary
-  busy: boolean
-  actionLabel?: string
-  onAction?(): void
   t: SessionManagerSectionProps['t']
 }): ReactNode {
   const [copied, setCopied] = useState(false)
@@ -112,14 +79,6 @@ function SessionRow({
         </div>
         <span className={css.rowTime}>{formatTime(summary.updatedAt)}</span>
       </div>
-      {actionLabel !== undefined && onAction !== undefined ? (
-        <button
-          type="button"
-          className={css.action}
-          disabled={busy}
-          onClick={onAction}
-        >{actionLabel}</button>
-      ) : null}
     </li>
   )
 }
@@ -132,14 +91,14 @@ export function SessionManagerSection({
   const phase = useSessions(state => state.phase)
   const ids = useSessions(state => state.ids)
   const byId = useSessions(state => state.byId)
-  const [archive, setArchive] = useState<ArchiveState | null>(null)
+  const [archivedIds, setArchivedIds] = useState<readonly string[] | null>(null)
   const [error, setError] = useState<string>()
-  const [busyId, setBusyId] = useState<string>()
+  const [exported, setExported] = useState(false)
 
   const loadArchived = async (): Promise<void> => {
     try {
       const fetched = await fetchArchivedIds()
-      setArchive(fetched)
+      setArchivedIds(fetched)
       setError(undefined)
     } catch (cause) {
       setError(t('loadFailed', { message: String(cause) }))
@@ -151,34 +110,8 @@ export function SessionManagerSection({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-time load only
   }, [])
 
-  const runMutation = async (action: 'archive' | 'restore', sessionId: string): Promise<void> => {
-    setBusyId(sessionId)
-    setError(undefined)
-    try {
-      await mutateArchive(action, sessionId)
-      setArchive(current => {
-        if (current === null) return current
-        if (action === 'archive') {
-          return {
-            archived: current.archived.includes(sessionId) ? current.archived : [...current.archived, sessionId],
-            restorable: current.restorable.includes(sessionId) ? current.restorable : [...current.restorable, sessionId],
-          }
-        }
-        return {
-          archived: current.archived.filter(existing => existing !== sessionId),
-          restorable: current.restorable.filter(existing => existing !== sessionId),
-        }
-      })
-    } catch (cause) {
-      setError(t('opFailed', { message: String(cause) }))
-    } finally {
-      setBusyId(undefined)
-    }
-  }
-
   const groups = useMemo(() => {
-    const archived = new Set(archive?.archived ?? [])
-    const restorable = new Set(archive?.restorable ?? [])
+    const archived = new Set(archivedIds ?? [])
     const active: SessionSummary[] = []
     const archivedList: SessionSummary[] = []
     const sorted = ids
@@ -189,8 +122,22 @@ export function SessionManagerSection({
       if (archived.has(summary.id)) archivedList.push(summary)
       else active.push(summary)
     }
-    return { active, archived: archivedList, restorable }
-  }, [ids, byId, archive])
+    return { active, archived: archivedList }
+  }, [ids, byId, archivedIds])
+
+  /** Export every archived session id as newline-separated text for local deletion. */
+  const exportArchivedIds = (): void => {
+    void (async () => {
+      try {
+        const list = groups.archived.map(summary => summary.id).join('\n')
+        await navigator.clipboard.writeText(list)
+        setExported(true)
+        setTimeout(() => { setExported(false) }, 1500)
+      } catch {
+        // Clipboard unavailable; ids remain individually copyable.
+      }
+    })()
+  }
 
   if (phase !== 'ready' && ids.length === 0) {
     return <p className={css.status}>{t('loading')}</p>
@@ -219,14 +166,7 @@ export function SessionManagerSection({
           {groups.active.length === 0 ? <p className={css.status}>{t('emptyConversations')}</p> : (
             <ul className={css.list}>
               {groups.active.map(summary => (
-                <SessionRow
-                  key={summary.id}
-                  summary={summary}
-                  busy={busyId === summary.id}
-                  actionLabel={t('delete')}
-                  onAction={() => { void runMutation('archive', summary.id) }}
-                  t={t}
-                />
+                <SessionRow key={summary.id} summary={summary} t={t} />
               ))}
             </ul>
           )}
@@ -236,25 +176,20 @@ export function SessionManagerSection({
           <div className={css.columnHead}>
             <h3>{t('archived')}</h3>
             <span>{t('count', { count: groups.archived.length })}</span>
+            {groups.archived.length > 0 ? (
+              <button
+                type="button"
+                className={css.exportButton}
+                onClick={exportArchivedIds}
+                title={t('copyAllIdsTitle')}
+              >{exported ? t('copied') : t('copyAllIds')}</button>
+            ) : null}
           </div>
           {groups.archived.length === 0 ? <p className={css.status}>{t('emptyArchived')}</p> : (
             <ul className={css.list}>
-              {groups.archived.map(summary => {
-                const restorable = groups.restorable.has(summary.id)
-                return restorable ? (
-                  <SessionRow
-                    key={summary.id}
-                    summary={summary}
-                    busy={busyId === summary.id}
-                    actionLabel={t('restore')}
-                    onAction={() => { void runMutation('restore', summary.id) }}
-                    t={t}
-                  />
-                ) : (
-                  // DSH-native archive: no unarchive API, so no restore action.
-                  <SessionRow key={summary.id} summary={summary} busy={false} t={t} />
-                )
-              })}
+              {groups.archived.map(summary => (
+                <SessionRow key={summary.id} summary={summary} t={t} />
+              ))}
             </ul>
           )}
         </div>
