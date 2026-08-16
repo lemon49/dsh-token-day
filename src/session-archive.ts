@@ -167,8 +167,11 @@ function queryId(url: string | undefined): string {
   }
 }
 
-/** Build the three archive routes against a lazily-resolving API holder. */
-function archiveRoutes(api: () => SessionArchiveApi | undefined): WebRouteLike[] {
+/** Build the three archive routes against a lazily-resolving API holder and the DSH native archive set. */
+function archiveRoutes(
+  api: () => SessionArchiveApi | undefined,
+  dshArchived: () => readonly string[],
+): WebRouteLike[] {
   const notReady = (res: HttpResponseLike): void => {
     json(res, 503, { error: 'session archive store is not ready' })
   }
@@ -183,7 +186,13 @@ function archiveRoutes(api: () => SessionArchiveApi | undefined): WebRouteLike[]
           return
         }
         try {
-          json(res, 200, { archivedSessionIds: [...current.archivedIds()] })
+          // Merge the plugin-owned archive set with the DSH native archive set
+          // (workspace registry) so sessions archived through the built-in UI
+          // stay hidden here too. Only plugin-owned ids are restorable: DSH has
+          // no unarchive API.
+          const plugin = [...current.archivedIds()]
+          const merged = [...new Set([...plugin, ...dshArchived()])]
+          json(res, 200, { archivedSessionIds: merged, restorableSessionIds: plugin })
         } catch (error) {
           json(res, 500, { error: String(error) })
         }
@@ -245,7 +254,16 @@ const WEB_SERVER_KEYS = ['webServer', 'httpServer'] as const
  */
 export function setupSessionArchive(ctx: Context): void {
   const storageDomain = ctx.get('storageDomain')
-  if (storageDomain === undefined) return
+  if (storageDomain === undefined) {
+    ctx.logger.warn('token day: storageDomain service unavailable; session archive disabled')
+    return
+  }
+
+  /** The DSH native archive set (workspace registry), read-only. */
+  const dshArchivedIds = (): readonly string[] => {
+    const registry = ctx.get('workspaceRegistry') as { archivedSessionIds?: readonly string[] } | undefined
+    return registry?.archivedSessionIds ?? []
+  }
 
   let api: SessionArchiveApi | undefined
   let disposeDomain: (() => Promise<void>) | undefined
@@ -270,7 +288,7 @@ export function setupSessionArchive(ctx: Context): void {
     const webServer = ctx.get(WEB_SERVER_KEYS[0]) ?? ctx.get(WEB_SERVER_KEYS[1])
     if (webServer === undefined) return
     webRegistered = true
-    const routes = archiveRoutes(() => api)
+    const routes = archiveRoutes(() => api, dshArchivedIds)
     for (const route of routes) {
       ctx.effect(() => (webServer as unknown as WebServerLike).register(route),
         'token-day: session archive route')
