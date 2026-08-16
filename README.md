@@ -102,7 +102,7 @@ dsh-token-day/
 
 - 全部数据来自 DSH 会话事件（`assistant/chunk`、`assistant/message`、`compaction/summary` 等），**不保存提示词或回复正文**
 - 投影 key 为 `tokenDay`（stateVersion 8）
-- 会话归档集合（DSH 内置 + 插件历史）通过 `GET /plugins/dsh-token-day/archived` 只读获取，用于"对话管理"页面展示
+- 会话归档集合直接读取 DSH 内置归档（workspace registry），通过 `GET /plugins/dsh-token-day/archived` 只读暴露给"对话管理"页面
 - 金额（消费金额/API 标价折算）相关展示不在本轮范围内，后续迭代补充
 
 ## 许可证

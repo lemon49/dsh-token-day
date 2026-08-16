@@ -16,7 +16,6 @@ export const inject = [
   'sessionProjectionCache',
   'sessionQuery',
   'sessions',
-  'storageDomain',
 ]
 
 /** Refresh one readable session without letting an operational failure stop later records or leave an attach race stale. */
