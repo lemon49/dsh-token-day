@@ -113,9 +113,12 @@ export const managerZh = {
   sessionIdLabel: 'session',
   copyId: '复制 id',
   copied: '已复制',
+  archive: '归档',
+  subagent: '子 agent',
   copyAllIds: '复制全部归档 id',
   copyAllIdsTitle: '将所有归档会话 id 复制为文本（换行分隔，供本地删除）',
   loadFailed: '加载归档列表失败：{message}',
+  opFailed: '操作失败：{message}',
 } satisfies Record<string, string>
 
 /** Conversation-manager locale key union. */
@@ -136,7 +139,10 @@ export const managerEn = {
   sessionIdLabel: 'session',
   copyId: 'Copy id',
   copied: 'Copied',
+  archive: 'Archive',
+  subagent: 'subagent',
   copyAllIds: 'Copy all archived ids',
   copyAllIdsTitle: 'Copy every archived session id as newline-separated text (for local deletion)',
   loadFailed: 'Failed to load archive list: {message}',
+  opFailed: 'Operation failed: {message}',
 } satisfies Record<ConversationManagerLocaleKey, string>

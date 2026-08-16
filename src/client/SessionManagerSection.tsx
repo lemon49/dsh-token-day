@@ -36,6 +36,24 @@ async function fetchArchivedIds(): Promise<string[]> {
   return archived as string[]
 }
 
+/** Archive one session through the DSH-native Host route (one-way, hides from sidebar). */
+async function mutateArchive(sessionId: string): Promise<void> {
+  const res = await fetch(`${ARCHIVE_BASE}/archive?id=${encodeURIComponent(sessionId)}`, { cache: 'no-store' })
+  if (!res.ok) {
+    let message = `HTTP ${res.status}`
+    try {
+      const data: unknown = await res.json()
+      if (typeof data === 'object' && data !== null
+        && typeof (data as { error?: unknown }).error === 'string') {
+        message = (data as { error: string }).error
+      }
+    } catch {
+      // Keep the HTTP status message when the body is not JSON.
+    }
+    throw new Error(message)
+  }
+}
+
 /** Format an epoch-millis timestamp as YYYY/M/D HH:mm:ss in local time. */
 function formatTime(value: number): string {
   const date = new Date(value)
@@ -44,12 +62,20 @@ function formatTime(value: number): string {
     + `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
 }
 
-/** One conversation row: title, session id (with copy), timestamp. */
+/** One conversation row: title (+subagent tag), session id (with copy), timestamp, optional archive action. */
 function SessionRow({
   summary,
+  subagent,
+  busy,
+  actionLabel,
+  onAction,
   t,
 }: {
   summary: SessionSummary
+  subagent: boolean
+  busy: boolean
+  actionLabel?: string
+  onAction?(): void
   t: SessionManagerSectionProps['t']
 }): ReactNode {
   const [copied, setCopied] = useState(false)
@@ -67,7 +93,10 @@ function SessionRow({
   return (
     <li className={css.row}>
       <div className={css.rowMain}>
-        <strong className={css.rowTitle} title={summary.displayTitle}>{summary.displayTitle}</strong>
+        <div className={css.rowTitleLine}>
+          <strong className={css.rowTitle} title={summary.displayTitle}>{summary.displayTitle}</strong>
+          {subagent ? <span className={css.subagentTag}>{t('subagent')}</span> : null}
+        </div>
         <div className={css.rowIdLine}>
           <span className={css.rowMeta} title={summary.id}>{t('sessionIdLabel')}={summary.id}</span>
           <button
@@ -79,6 +108,14 @@ function SessionRow({
         </div>
         <span className={css.rowTime}>{formatTime(summary.updatedAt)}</span>
       </div>
+      {actionLabel !== undefined && onAction !== undefined ? (
+        <button
+          type="button"
+          className={css.action}
+          disabled={busy}
+          onClick={onAction}
+        >{actionLabel}</button>
+      ) : null}
     </li>
   )
 }
@@ -93,6 +130,7 @@ export function SessionManagerSection({
   const byId = useSessions(state => state.byId)
   const [archivedIds, setArchivedIds] = useState<readonly string[] | null>(null)
   const [error, setError] = useState<string>()
+  const [busyId, setBusyId] = useState<string>()
   const [exported, setExported] = useState(false)
 
   const loadArchived = async (): Promise<void> => {
@@ -109,6 +147,23 @@ export function SessionManagerSection({
     void loadArchived()
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-time load only
   }, [])
+
+  /** Archive one session through the DSH-native route (one-way, hides from sidebar). */
+  const runArchive = async (sessionId: string): Promise<void> => {
+    setBusyId(sessionId)
+    setError(undefined)
+    try {
+      await mutateArchive(sessionId)
+      setArchivedIds(current => {
+        if (current === null) return current
+        return current.includes(sessionId) ? current : [...current, sessionId]
+      })
+    } catch (cause) {
+      setError(t('opFailed', { message: String(cause) }))
+    } finally {
+      setBusyId(undefined)
+    }
+  }
 
   const groups = useMemo(() => {
     const archived = new Set(archivedIds ?? [])
@@ -165,9 +220,23 @@ export function SessionManagerSection({
           </div>
           {groups.active.length === 0 ? <p className={css.status}>{t('emptyConversations')}</p> : (
             <ul className={css.list}>
-              {groups.active.map(summary => (
-                <SessionRow key={summary.id} summary={summary} t={t} />
-              ))}
+              {groups.active.map(summary => {
+                const subagent = summary.origin === 'subagent'
+                return (
+                  <SessionRow
+                    key={summary.id}
+                    summary={summary}
+                    subagent={subagent}
+                    busy={busyId === summary.id}
+                    // Subagent sessions are hidden from the DSH sidebar, so they
+                    // need an archive entry point here; ordinary sessions archive
+                    // through the DSH UI.
+                    actionLabel={subagent ? t('archive') : undefined}
+                    onAction={subagent ? () => { void runArchive(summary.id) } : undefined}
+                    t={t}
+                  />
+                )
+              })}
             </ul>
           )}
         </div>
@@ -188,7 +257,13 @@ export function SessionManagerSection({
           {groups.archived.length === 0 ? <p className={css.status}>{t('emptyArchived')}</p> : (
             <ul className={css.list}>
               {groups.archived.map(summary => (
-                <SessionRow key={summary.id} summary={summary} t={t} />
+                <SessionRow
+                  key={summary.id}
+                  summary={summary}
+                  subagent={summary.origin === 'subagent'}
+                  busy={false}
+                  t={t}
+                />
               ))}
             </ul>
           )}
