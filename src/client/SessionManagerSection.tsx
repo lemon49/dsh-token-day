@@ -285,7 +285,8 @@ export function SessionManagerSection({
         const fresh = await fetchArchivedIds()
         setArchivedIds(fresh)
         const rows = orderArchivedIds(ids, byId, fresh)
-        const text = rows.length > 0 ? `${rows.join('\n')}\n` : ''
+        const header = `# dsh-archived-session-ids exported at ${new Date().toISOString()}\n# Total: ${rows.length} session${rows.length !== 1 ? 's' : ''}\n`
+        const text = rows.length > 0 ? `${header}${rows.join('\n')}\n` : ''
         downloadTextFile(exportFileName(), text)
         setExported(true)
         setTimeout(() => { setExported(false) }, 2000)
