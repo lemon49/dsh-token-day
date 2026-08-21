@@ -17,9 +17,10 @@ export type TokenUsageSectionProps = PropsRuntime<'settings.section'>
 /** Preset trailing-window sizes in UTC days. */
 type PresetDays = 1 | 3 | 7 | 30 | 90
 
-/** Selected date range: a preset trailing window or an explicit custom span. */
+/** Selected date range: a preset trailing window, yesterday, or an explicit custom span. */
 type RangeSelection =
   | { kind: 'preset'; days: PresetDays }
+  | { kind: 'yesterday' }
   | { kind: 'custom'; start: string; end: string }
 
 interface SessionUsageRow {
@@ -240,6 +241,11 @@ function datesBetween(startIso: string, endIso: string): string[] {
 
 /** Expand the active selection into an ordered date list, oldest first. */
 function datesInRange(selection: RangeSelection, now = Date.now()): string[] {
+  if (selection.kind === 'yesterday') {
+    const yesterday = new Date(now)
+    yesterday.setUTCDate(yesterday.getUTCDate() - 1)
+    return [dayKey(yesterday.getTime())]
+  }
   return selection.kind === 'preset'
     ? datesEndingOn(now, selection.days)
     : datesBetween(selection.start, selection.end)
@@ -256,6 +262,7 @@ function defaultCustomDraft(now = Date.now()): { start: string; end: string } {
 /** Human label for the active selection. */
 function rangeLabelOf(selection: RangeSelection, t: TokenUsageSectionProps['t']): string {
   if (selection.kind === 'custom') return t('customRange')
+  if (selection.kind === 'yesterday') return t('yesterday')
   if (selection.days === 1) return t('today')
   if (selection.days === 3) return t('day3')
   return t('rangeDays', { count: selection.days })
@@ -688,6 +695,11 @@ function RangeControls({
             >{label}</button>
           )
         })}
+        <button
+          type="button"
+          aria-pressed={selection.kind === 'yesterday'}
+          onClick={() => { onSelect({ kind: 'yesterday' }) }}
+        >{t('yesterday')}</button>
         <button
           type="button"
           aria-pressed={selection.kind === 'custom'}
