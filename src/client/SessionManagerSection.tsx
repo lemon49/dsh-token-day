@@ -85,6 +85,27 @@ function exportFileName(date = new Date()): string {
 }
 
 /**
+ * Header written at the top of the exported txt. Each line starts with `#`
+ * so scripts can skip them and still read one id per line. It names the two
+ * deletion steps but deliberately avoids any machine-specific file path —
+ * the DSH home directory differs per machine.
+ */
+function archiveExportHeader(count: number, now = new Date()): string {
+  return [
+    '# DSH 归档会话 id 导出（供本地删除使用）',
+    `# 导出时间：${now.toISOString()}（UTC）`,
+    `# 总数：${count} 个会话`,
+    '#',
+    '# 执行删除时请同时完成两步：',
+    '# 1. 删除每个 id 对应的本地会话文件',
+    '# 2. 从 DSH 工作区注册表（workspace registry）的 archivedSessionIds 列表中删除对应 id',
+    '#    否则"对话管理"页面会残留"（无会话记录）"条目',
+    '#',
+    '',
+  ].join('\n')
+}
+
+/**
  * Order archived ids for display and export exactly alike ("what you see is
  * what you export"): archived sessions that still have a live summary first,
  * newest first, then id-only archive entries (no session record) in archive
@@ -285,8 +306,7 @@ export function SessionManagerSection({
         const fresh = await fetchArchivedIds()
         setArchivedIds(fresh)
         const rows = orderArchivedIds(ids, byId, fresh)
-        const header = `# dsh-archived-session-ids exported at ${new Date().toISOString()}\n# Total: ${rows.length} session${rows.length !== 1 ? 's' : ''}\n`
-        const text = rows.length > 0 ? `${header}${rows.join('\n')}\n` : ''
+        const text = rows.length > 0 ? `${archiveExportHeader(rows.length)}${rows.join('\n')}\n` : ''
         downloadTextFile(exportFileName(), text)
         setExported(true)
         setTimeout(() => { setExported(false) }, 2000)
@@ -294,7 +314,7 @@ export function SessionManagerSection({
         // Fall back to the clipboard so the ids remain obtainable.
         try {
           const rows = orderArchivedIds(ids, byId, archivedIds ?? [])
-          await navigator.clipboard.writeText(rows.join('\n'))
+          await navigator.clipboard.writeText(rows.length > 0 ? `${archiveExportHeader(rows.length)}${rows.join('\n')}\n` : '')
           setExported(true)
           setTimeout(() => { setExported(false) }, 2000)
         } catch (clipCause) {
