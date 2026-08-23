@@ -5,7 +5,6 @@ import type { SessionRecord } from '@deepseek-ai/dsh-session-query'
 import type {} from '@deepseek-ai/dsh-session-persistence'
 import type {} from '@deepseek-ai/dsh-session-projection-cache'
 import { tokenDayProjectionDefinition } from './projection.ts'
-import { setupSessionArchive } from './session-archive.ts'
 
 /** Cordis plugin name. */
 export const name = 'token-day-recorder'
@@ -53,7 +52,7 @@ async function warmHistory(ctx: Context, signal: AbortSignal): Promise<void> {
   }
 }
 
-/** Register the projection, start cancellable fail-soft history warming, and set up the session archive. */
+/** Register the projection and start cancellable fail-soft history warming. */
 export function apply(ctx: Context): void {
   ctx.sessionProjections.register(tokenDayProjectionDefinition)
   ctx.effect(() => {
@@ -64,5 +63,4 @@ export function apply(ctx: Context): void {
       await operation
     }
   }, 'token day: warm historical projections')
-  setupSessionArchive(ctx)
 }
