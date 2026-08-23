@@ -241,15 +241,13 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Archive row whose session summary is no longer available. */
-.rowPlaceholder {
-  opacity: 0.7;
-}
-
-.rowPlaceholderText {
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 13px;
-  line-height: 19px;
+/* Hint for archived ids whose session files are gone (orphan markers). */
+.orphanHint {
+  margin-left: 6px;
+  color: var(--dsw-alias-state-warning-primary, #c98a1a);
+  font-size: 11px;
+  font-style: normal;
+  line-height: 18px;
 }
 
 .action {

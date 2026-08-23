@@ -90,27 +90,28 @@ function exportFileName(date = new Date()): string {
  * deletion steps but deliberately avoids any machine-specific file path —
  * the DSH home directory differs per machine.
  */
-function archiveExportHeader(count: number, now = new Date()): string {
+function archiveExportHeader(total: number, withRecord: number, now = new Date()): string {
+  const orphan = total - withRecord
   return [
     '# DSH 归档会话 id 导出（供本地删除使用）',
     `# 导出时间：${now.toISOString()}（UTC）`,
-    `# 总数：${count} 个会话`,
+    `# 总数：${total} 个会话（有会话记录 ${withRecord} 个，无记录 ${orphan} 个）`,
     '#',
     '# 执行删除时请同时完成两步：',
-    '# 1. 删除每个 id 对应的本地会话文件',
-    '# 2. 从 DSH 工作区注册表（workspace registry）的 archivedSessionIds 列表中删除对应 id',
-    '#    否则"对话管理"页面会残留"（无会话记录）"条目',
+    '# 1. 有会话记录的 id：删除本地会话文件，并从 DSH 工作区注册表（workspace registry）的 archivedSessionIds 中删除对应 id',
+    '# 2. 无记录的 id（仅剩归档标记）：直接从 workspace registry 的 archivedSessionIds 中删除对应 id',
+    '#    否则"对话管理"页面会残留无会话记录条目',
     '#',
     '',
   ].join('\n')
 }
 
 /**
- * Order archived ids for display and export exactly alike ("what you see is
- * what you export"): archived sessions that still have a live summary first,
- * newest first, then id-only archive entries (no session record) in archive
- * order. Exporting this exact list guarantees the txt file matches the
- * archive set one-to-one, so deleting from it never misses or mis-targets.
+ * Order archived ids for export: archived sessions that still have a live
+ * summary first (newest first), then id-only archive entries (no session
+ * record) in archive order. The UI shows only the with-summary subset, but
+ * the export includes every id so orphaned registry entries can be cleaned
+ * up too — the exported txt matches the archive set one-to-one.
  */
 function orderArchivedIds(
   ids: readonly SessionId[],
@@ -186,46 +187,6 @@ function SessionRow({
   )
 }
 
-/** One archive row whose session summary is no longer available (id still copyable). */
-function PlaceholderRow({
-  sessionId,
-  t,
-}: {
-  sessionId: string
-  t: SessionManagerSectionProps['t']
-}): ReactNode {
-  const [copied, setCopied] = useState(false)
-  const copyId = (): void => {
-    void (async () => {
-      try {
-        await navigator.clipboard.writeText(sessionId)
-        setCopied(true)
-        setTimeout(() => { setCopied(false) }, 1500)
-      } catch {
-        // Clipboard may be unavailable (permissions/iframe); the id stays selectable as a fallback.
-      }
-    })()
-  }
-  return (
-    <li className={`${css.row} ${css.rowPlaceholder}`}>
-      <div className={css.rowMain}>
-        <div className={css.rowTitleLine}>
-          <span className={css.rowPlaceholderText}>{t('noRecord')}</span>
-        </div>
-        <div className={css.rowIdLine}>
-          <span className={css.rowMeta} title={sessionId}>{t('sessionIdLabel')}={sessionId}</span>
-          <button
-            type="button"
-            className={css.copyButton}
-            onClick={copyId}
-            title={copied ? t('copied') : t('copyId')}
-          >{copied ? t('copied') : t('copyId')}</button>
-        </div>
-      </div>
-    </li>
-  )
-}
-
 /** Render the conversation manager with live and archived session columns. */
 export function SessionManagerSection({
   useSessions,
@@ -285,16 +246,24 @@ export function SessionManagerSection({
       .sort((left, right) => right.updatedAt - left.updatedAt)
   }, [ids, byId, archivedIds])
 
-  /** Archived ids in display order — exactly what the export txt contains. */
-  const archivedOrder = useMemo(
-    () => orderArchivedIds(ids, byId, archivedIds ?? []),
+  /** Archived sessions with a live summary — what the archive column shows. */
+  const archivedVisible = useMemo(
+    () => orderArchivedIds(ids, byId, archivedIds ?? []).filter(id => byId[id] !== undefined),
     [ids, byId, archivedIds],
+  )
+
+  /** Archived ids that no longer have a session file (orphan registry entries). */
+  const orphanCount = useMemo(
+    () => Math.max(0, (archivedIds?.length ?? 0) - archivedVisible.length),
+    [archivedIds, archivedVisible],
   )
 
   /**
    * Export every archived session id as a txt file (one id per line). The id
    * list is re-fetched from the Host at export time so it matches the archive
-   * registry exactly, never a stale or partial subset of it.
+   * registry exactly, never a stale or partial subset of it. Orphaned ids
+   * (no session file) are exported too, so the executor can remove them from
+   * the workspace registry and avoid "no session record" leftovers.
    */
   const exportArchivedIds = (): void => {
     if (exportingRef.current) return
@@ -306,7 +275,8 @@ export function SessionManagerSection({
         const fresh = await fetchArchivedIds()
         setArchivedIds(fresh)
         const rows = orderArchivedIds(ids, byId, fresh)
-        const text = rows.length > 0 ? `${archiveExportHeader(rows.length)}${rows.join('\n')}\n` : ''
+        const withRecord = rows.filter(id => byId[id] !== undefined).length
+        const text = rows.length > 0 ? `${archiveExportHeader(rows.length, withRecord)}${rows.join('\n')}\n` : ''
         downloadTextFile(exportFileName(), text)
         setExported(true)
         setTimeout(() => { setExported(false) }, 2000)
@@ -314,7 +284,8 @@ export function SessionManagerSection({
         // Fall back to the clipboard so the ids remain obtainable.
         try {
           const rows = orderArchivedIds(ids, byId, archivedIds ?? [])
-          await navigator.clipboard.writeText(rows.length > 0 ? `${archiveExportHeader(rows.length)}${rows.join('\n')}\n` : '')
+          const withRecord = rows.filter(id => byId[id] !== undefined).length
+          await navigator.clipboard.writeText(rows.length > 0 ? `${archiveExportHeader(rows.length, withRecord)}${rows.join('\n')}\n` : '')
           setExported(true)
           setTimeout(() => { setExported(false) }, 2000)
         } catch (clipCause) {
@@ -377,7 +348,9 @@ export function SessionManagerSection({
         <div className={css.column}>
           <div className={css.columnHead}>
             <h3>{t('archived')}</h3>
-            <span>{t('count', { count: archivedIds?.length ?? 0 })}</span>
+            <span>{t('count', { count: archivedVisible.length })}
+              {orphanCount > 0 ? <em className={css.orphanHint}>{t('orphanHint', { count: orphanCount })}</em> : null}
+            </span>
             {archivedIds !== null && archivedIds.length > 0 ? (
               <button
                 type="button"
@@ -388,15 +361,15 @@ export function SessionManagerSection({
               >{exporting ? t('exporting') : exported ? t('exported') : t('exportAllIds')}</button>
             ) : null}
           </div>
-          {archivedIds === null || archivedIds.length === 0
-            ? <p className={css.status}>{t('emptyArchived')}</p>
+          {archivedIds === null || archivedVisible.length === 0
+            ? <p className={css.status}>
+                {archivedIds !== null && archivedIds.length > 0 ? t('emptyArchivedOrphans') : t('emptyArchived')}
+              </p>
             : (
               <ul className={css.list}>
-                {archivedOrder.map(id => {
+                {archivedVisible.map(id => {
                   const summary = byId[id]
-                  if (summary === undefined) {
-                    return <PlaceholderRow key={id} sessionId={id} t={t} />
-                  }
+                  if (summary === undefined) return null
                   return (
                     <SessionRow
                       key={summary.id}
