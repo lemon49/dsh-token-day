@@ -48,17 +48,17 @@ async function call(method, url, headers = {}, remoteAddress = '127.0.0.1') {
 
 const results = []
 
-const status = await call('GET', '/api/hot-restart/status')
+const status = await call('GET', '/api/toolbox/status')
 results.push(['status 200', status.status === 200 && status.json.ok === true])
 results.push(['status carries pid', status.json.value.pid === process.pid])
 results.push(['status carries argv', Array.isArray(status.json.value.argv)])
 console.log('status ->', status.status, JSON.stringify(status.json.value))
 
-const crossOrigin = await call('POST', '/api/hot-restart/restart', { origin: 'http://evil.example' })
+const crossOrigin = await call('POST', '/api/toolbox/restart', { origin: 'http://evil.example' })
 results.push(['cross-origin rejected 403', crossOrigin.status === 403 && crossOrigin.json.error.code === 'origin-rejected'])
 console.log('cross-origin ->', crossOrigin.status, crossOrigin.json.error.code)
 
-const noOrigin = await call('POST', '/api/hot-restart/restart')
+const noOrigin = await call('POST', '/api/toolbox/restart')
 results.push(['origin-less rejected 403', noOrigin.status === 403])
 console.log('origin-less ->', noOrigin.status)
 
@@ -66,7 +66,7 @@ console.log('origin-less ->', noOrigin.status)
 // "Host 得是字面量地址" 这一层挡下。
 const rebind = await call(
   'POST',
-  '/api/hot-restart/restart',
+  '/api/toolbox/restart',
   { host: 'evil.example:3080', origin: 'http://evil.example:3080' },
 )
 results.push(['dns-rebinding host rejected 403', rebind.status === 403 && rebind.json.error.code === 'origin-rejected'])
@@ -75,22 +75,22 @@ console.log('rebinding host ->', rebind.status, rebind.json.error.code)
 // LAN 上的未认证调用：同源可伪造，因此必须是回环来源。
 const remote = await call(
   'POST',
-  '/api/hot-restart/restart',
+  '/api/toolbox/restart',
   { origin: 'http://127.0.0.1:3080' },
   '192.168.1.50',
 )
 results.push(['non-loopback caller rejected 403', remote.status === 403 && remote.json.error.code === 'remote-rejected'])
 console.log('non-loopback caller ->', remote.status, remote.json.error.code)
 
-const wrongMethod = await call('GET', '/api/hot-restart/restart')
+const wrongMethod = await call('GET', '/api/toolbox/restart')
 results.push(['GET restart rejected 405', wrongMethod.status === 405])
 console.log('GET restart ->', wrongMethod.status)
 
-const unknown = await call('GET', '/api/hot-restart/nope')
+const unknown = await call('GET', '/api/toolbox/nope')
 results.push(['unknown route 404', unknown.status === 404])
 console.log('unknown route ->', unknown.status)
 
-const sameOrigin = await call('POST', '/api/hot-restart/restart', { origin: 'http://127.0.0.1:3080' })
+const sameOrigin = await call('POST', '/api/toolbox/restart', { origin: 'http://127.0.0.1:3080' })
 results.push(['same-origin accepted 202', sameOrigin.status === 202 && sameOrigin.json.ok === true])
 results.push(['response carries oldPid', sameOrigin.json.value.oldPid === process.pid])
 results.push(['response carries helperPid', Number.isInteger(sameOrigin.json.value.helperPid)])
@@ -105,7 +105,7 @@ if (Number.isInteger(sameOrigin.json.value.helperPid)) {
   }
 }
 
-const again = await call('POST', '/api/hot-restart/restart', { origin: 'http://127.0.0.1:3080' })
+const again = await call('POST', '/api/toolbox/restart', { origin: 'http://127.0.0.1:3080' })
 results.push(['duplicate rejected 409', again.status === 409 && again.json.error.code === 'already-restarting'])
 console.log('duplicate ->', again.status, again.json.error.code)
 

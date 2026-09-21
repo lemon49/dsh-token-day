@@ -1,6 +1,7 @@
-# dsh-hot-restart bundle patch: inserts this plugin's host row into the
-# profile tree. The client half (`lib/client.js`) is discovered separately
-# through the `dsh.client` declaration in package.json.
+# dsh-toolbox bundle patch: inserts this plugin's host row into the profile tree.
+# The client half (`lib/client.js`) is discovered separately through the
+# `dsh.client` declaration in package.json, and contributes one settings page
+# (`settings.section` → 「工具箱」) holding both feature panels.
 - insert:
-    - id: hot-restart
-      name: 'dsh-hot-restart'
+    - id: toolbox
+      name: 'dsh-toolbox'

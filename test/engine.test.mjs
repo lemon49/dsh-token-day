@@ -18,7 +18,7 @@ const HERE = fileURLToPath(new URL('.', import.meta.url))
 const HELPER = join(HERE, '..', 'lib', 'relaunch.js')
 const SERVICE = join(HERE, 'fixtures', 'fake-service.mjs')
 const PORT = 3999
-const LOG = join(tmpdir(), 'dsh-hot-restart-test.log')
+const LOG = join(tmpdir(), 'dsh-toolbox-test.log')
 
 const sleep = (ms) => new Promise((r) => { setTimeout(r, ms) })
 
@@ -50,7 +50,7 @@ const payload = {
   waitForExitMs: 15000,
   killOnTimeout: true,
 }
-const payloadPath = join(tmpdir(), 'dsh-hot-restart-test-payload.json')
+const payloadPath = join(tmpdir(), 'dsh-toolbox-test-payload.json')
 writeFileSync(payloadPath, JSON.stringify(payload), 'utf8')
 
 // 3. 派 helper（detached，与 host 半边做法一致）
