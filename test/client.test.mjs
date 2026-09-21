@@ -1,10 +1,15 @@
 /**
  * dsh-toolbox client bundle 的加载契约与行为测试。
  *
- * 三件事必须成立，否则这个插件就是坏的：
+ * 四件事必须成立，否则这个插件就是坏的：
  *   1. bundle 以包名注册，并贡献**一个独立设置分区**（不再是「通用」里的一行）；
  *   2. 分区下挂着「服务重启」和「待处理提醒」两个面板；
- *   3. 提醒的每一个时机分支都对 —— 弹错了是打扰，漏弹了是白装。
+ *   3. 提醒的每一个时机分支都对 —— 弹错了是打扰，漏弹了是白装；
+ *   4. 通知的内容**和那条请求本身一致**（哪个工具、什么问题），而不是笼统的
+ *      "有人找你" —— 否则用户照样得切回页面才知道要批什么，提醒就白弹了。
+ *
+ * 翻译函数用**真实字典**而不是回显 key：第 4 条断言要检查插值后的成品文案，
+ * 回显 key 的假 t 会让 `{tool}` 永远填不上，测试就失去意义。
  */
 
 // ---------- 浏览器替身 ----------
@@ -90,12 +95,18 @@ let statusListener = null
 const slots = []
 const locales = []
 const rendered = []
+/** apply() 注册进来的真实中文文案，供 translate 使用。 */
+let dictionary = {}
 
 const ctx = {
   effect: (fn) => fn(),
   locale: {
-    register: (ns, dicts) => { locales.push([ns, Object.keys(dicts)]); return () => {} },
-    bind: () => (key) => key,
+    register: (ns, dicts) => {
+      locales.push([ns, Object.keys(dicts)])
+      dictionary = dicts.zh
+      return () => {}
+    },
+    bind: () => (key) => dictionary[key] ?? key,
   },
   slots: {
     inject: (name, cb) => { cb() },
@@ -116,6 +127,7 @@ mod.apply(ctx)
 
 check('registers zh and en dictionaries',
   locales.some(([, langs]) => langs.includes('zh') && langs.includes('en')))
+check('dictionary resolved for assertions', typeof dictionary.notifyWaitApproval === 'string')
 
 // 关键断言：独立分区，而不是「通用」里的一行。
 const section = slots.find(([options]) => options.name === 'settings.section')
@@ -123,7 +135,7 @@ check('registers its own settings section', section !== undefined)
 check('section id is dsh-toolbox', section?.[0].id === 'dsh-toolbox')
 check('section carries a nav label', typeof section?.[0].label === 'function')
 check('section declares its child slot',
-  section?.[0].children?.['toolbox.item']?.kind === 'list')
+  section?.[0]?.children?.['toolbox.item']?.kind === 'list')
 check('does NOT squeeze into settings.general.item',
   slots.every(([options]) => options.name !== 'settings.general.item'))
 
@@ -146,52 +158,81 @@ check('section renders its child slot', rendered.includes('toolbox.item'))
 for (const [options, component] of items) {
   let ok = false
   try {
-    ok = component({ t: (key) => key }) !== null
+    ok = component({ t: (key) => dictionary[key] ?? key }) !== null
   } catch (error) {
     console.log(`panel ${options.id} render threw:`, error)
   }
   check(`panel "${options.id}" renders without throwing`, ok)
 }
 
-// ---------- 提醒行为 ----------
+// ---------- 提醒时机 ----------
 
-/** 模拟一次"待处理交互出现"。 */
-const appear = (key, kind, sessionId = 's1') => {
-  state.set(sessionId, { pendingInteraction: { key, kind, sessionId } })
+/** 模拟一次"待处理交互出现"；`extra` 带上领域自己的请求字段。 */
+const appear = (key, kind, sessionId = 's1', extra = {}) => {
+  state.set(sessionId, { pendingInteraction: { key, kind, sessionId, ...extra } })
   statusListener()
 }
 
-appear('k1', 'approval')
-check('alerts while the page is hidden', notifications.length === 1)
-check('notification body carries the session title', String(notifications[0]?.options?.body).includes('会话一'))
-check('notification tag is the pending key', notifications[0]?.options?.tag === 'k1')
+const last = () => notifications[notifications.length - 1]
 
-appear('k1', 'approval')
+// 审批：请求体里有 toolName 和 reason。
+appear('k1', 'approval', 's1', { toolName: 'Bash', reason: '需要删掉构建产物' })
+check('alerts while the page is hidden', notifications.length === 1)
+check('notification title names the session', String(last()?.title).includes('会话一'))
+check('notification title says an approval is needed',
+  String(last()?.title).includes(dictionary.notifyWaitApproval))
+check('approval body names the requesting tool', String(last()?.options?.body).includes('Bash'))
+check('approval body carries the requester reason',
+  String(last()?.options?.body).includes('需要删掉构建产物'))
+check('approval body leaves no unfilled placeholder',
+  !String(last()?.options?.body).includes('{'))
+check('notification tag is the pending key', last()?.options?.tag === 'k1')
+
+appear('k1', 'approval', 's1', { toolName: 'Bash' })
 check('does not repeat the same pending request', notifications.length === 1)
 
+// 问题：请求体里是问题原文。前台先不出声，切后台时补上。
 document.visibilityState = 'visible'
-appear('k2', 'question')
+appear('k2', 'question', 's1', { questions: [{ id: 'q1', question: '配置写到哪个文件？' }] })
 check('stays silent while the page is visible', notifications.length === 1)
 
 document.visibilityState = 'hidden'
 docListeners.get('visibilitychange')?.()
 check('catches up when the page goes back to the background', notifications.length === 2)
+check('catch-up notification quotes the question',
+  String(last()?.options?.body).includes('配置写到哪个文件？'))
+check('question title says an answer is needed',
+  String(last()?.title).includes(dictionary.notifyWaitQuestion))
 
-appear('k3', 'plan-review')
+// 计划复核：同样引问题原文。
+appear('k3', 'plan-review', 's1', { questions: [{ id: 'p1', question: '可以按这个计划实施吗？' }] })
 check('alerts for plan review', notifications.length === 3)
+check('plan-review body quotes the review question',
+  String(last()?.options?.body).includes('可以按这个计划实施吗？'))
+check('plan-review title says a review is needed',
+  String(last()?.title).includes(dictionary.notifyWaitPlan))
 
+// 请求体缺字段时退回笼统文案 —— 不编造内容。
+appear('k6', 'approval', 's1')
+check('falls back to a generic line when approval carries no detail',
+  String(last()?.options?.body) === dictionary.notifyKindApproval)
+appear('k7', 'question', 's1', { questions: [] })
+check('falls back to a generic line when the question batch is empty',
+  String(last()?.options?.body) === dictionary.notifyKindQuestion)
+
+// 其它分支。
 state.set('s1', { pendingInteraction: { key: 'k4', kind: 'something-else', sessionId: 's1' } })
 statusListener()
-check('ignores kinds outside the watch list', notifications.length === 3)
+check('ignores kinds outside the watch list', notifications.length === 5)
 
 state.clear()
 statusListener()
-appear('k1', 'approval')
-check('reclaims keys after settlement', notifications.length === 4)
+appear('k1', 'approval', 's1', { toolName: 'Read' })
+check('reclaims keys after settlement', notifications.length === 6)
 
 FakeNotification.permission = 'denied'
-appear('k5', 'approval')
-check('stays silent without permission', notifications.length === 4)
+appear('k5', 'approval', 's1', { toolName: 'Bash' })
+check('stays silent without permission', notifications.length === 6)
 FakeNotification.permission = 'granted'
 
 let failed = 0
