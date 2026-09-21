@@ -30,7 +30,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "node test/host.test.mjs && node test/engine.test.mjs"
+    "test": "node test/host.test.mjs && node test/client.test.mjs && node test/engine.test.mjs"
   },
   "dsh": {
     "runtime": "host",
