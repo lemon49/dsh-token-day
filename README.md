@@ -14,7 +14,7 @@
 | **原样复活** | 用 `process.execPath` + `process.argv.slice(1)` + 原 cwd + 原 env 拉起新进程。源码模式（`node --import tsx/esm apps/cli/src/bin.ts web`）、自定义端口、包装脚本启动——都能忠实复现，不写死 `dsh web`。 |
 | **不撞端口** | 重启助手等旧进程真正消失、并确认监听端口已释放，才启动新进程，避免 `EADDRINUSE`。 |
 | **页面自动重连** | 前端点完按钮后轮询状态端点，等服务重新应答再自动刷新——你不用猜什么时候刷新。 |
-| **同源防护** | 重启端点只接受同源 POST（校验 `Origin`/`Referer`），不是 CSRF 的靶子。 |
+| **收窄的入口** | 重启端点三层设防：只收同源 POST（校验 `Origin`/`Referer`）、Host 必须是字面量地址（挡 DNS rebinding）、调用者必须是回环来源（挡 LAN 上的未认证调用）。 |
 | **可诊断** | 重启全过程写进日志文件；新进程的 stdout/stderr 也接进同一个文件，重启后的输出不会凭空消失。 |
 | **零运行时依赖** | host 半边只用 `node:*` 内置模块；client 半边手写 `__ModuleLoader__` 工厂，不经打包、不拉依赖。 |
 
@@ -96,7 +96,17 @@ dsh plugin --profile web add link:D:\path\to\dsh-hot-restart
     waitForExitMs: 120000  # 助手等旧进程退出的上限（1000–600000）
     killOnTimeout: true    # 超时后是否强杀旧进程
     hardExitMs: 20000      # 优雅退出失效后的硬退出兜底（1000–300000）
+    allowHostnames: []     # 额外放行的域名（默认只认 IP 字面量与 localhost）
+    allowRemote: false     # 是否允许非回环来源调用重启端点
 ```
+
+### 为什么默认这么严
+
+重启会打断进程内所有活动会话，而**本插件注册的路由不经过 DSH 那道 `/api` 认证栅栏**（`webServer.register` 挂上去的路由是裸的）。所以三道检查都在插件自己身上：
+
+1. **同源**：浏览器对同源 fetch 必带 `Origin`（至少 `Referer`），两者皆无直接拒绝 —— 挡 CSRF。
+2. **Host 必须是字面量地址**：攻击者把自己的域名解析到 `127.0.0.1`（DNS rebinding）时，`Origin` 与 `Host` 会同时是 `evil.example:3080`，同源检查会放行；这一层把它挡回去。确实需要走域名的部署，把域名写进 `allowHostnames`。
+3. **调用者必须是回环**：LAN 上的调用方能直接伪造 `Origin` 与 `Host`，同源检查形同虚设；这一层要求来源地址是 `127.x`/`::1`。确有需要时用 `allowRemote: true` 放开。
 
 ---
 

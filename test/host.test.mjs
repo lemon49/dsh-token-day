@@ -37,9 +37,12 @@ function makeRes() {
 const route = routes[0]
 console.log('registered routes:', routes.map((r) => `${r.kind} ${r.path}`).join(', '))
 
-async function call(method, url, headers = {}) {
+async function call(method, url, headers = {}, remoteAddress = '127.0.0.1') {
   const res = makeRes()
-  await route.handler({ method, url, headers: { host: '127.0.0.1:3080', ...headers } }, res)
+  await route.handler(
+    { method, url, headers: { host: '127.0.0.1:3080', ...headers }, socket: { remoteAddress } },
+    res,
+  )
   return { status: res._out.status, json: res._out.body === '' ? null : JSON.parse(res._out.body) }
 }
 
@@ -58,6 +61,26 @@ console.log('cross-origin ->', crossOrigin.status, crossOrigin.json.error.code)
 const noOrigin = await call('POST', '/api/hot-restart/restart')
 results.push(['origin-less rejected 403', noOrigin.status === 403])
 console.log('origin-less ->', noOrigin.status)
+
+// DNS rebinding：Origin 与 Host 都指向攻击者域名，同源检查会放行，必须靠
+// "Host 得是字面量地址" 这一层挡下。
+const rebind = await call(
+  'POST',
+  '/api/hot-restart/restart',
+  { host: 'evil.example:3080', origin: 'http://evil.example:3080' },
+)
+results.push(['dns-rebinding host rejected 403', rebind.status === 403 && rebind.json.error.code === 'origin-rejected'])
+console.log('rebinding host ->', rebind.status, rebind.json.error.code)
+
+// LAN 上的未认证调用：同源可伪造，因此必须是回环来源。
+const remote = await call(
+  'POST',
+  '/api/hot-restart/restart',
+  { origin: 'http://127.0.0.1:3080' },
+  '192.168.1.50',
+)
+results.push(['non-loopback caller rejected 403', remote.status === 403 && remote.json.error.code === 'remote-rejected'])
+console.log('non-loopback caller ->', remote.status, remote.json.error.code)
 
 const wrongMethod = await call('GET', '/api/hot-restart/restart')
 results.push(['GET restart rejected 405', wrongMethod.status === 405])
