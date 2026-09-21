@@ -1,110 +1,139 @@
-# dsh-token-day
+# dsh-hot-restart
 
-面向 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（DSH）的 Token 用量与计费统计 + 会话管理插件。基于 DSH 持久会话日志统计模型请求与 Token 用量，在 Web 设置页提供可视化看板；同时提供"对话管理"页面，查看 DSH 会话与归档、复制/导出会话 id。
+> DSH 热重启插件：在「设置 → 通用」一键重启 dsh 服务。用**原启动命令**拉起新进程，页面自己等着重连。
+> One-click hot restart for DeepSeek Harness (dsh): relaunches the exact original command and the browser reconnects by itself.
 
-## 功能特性
+[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 是一个长时间运行的 dsh Web 进程。"改完东西要重启"通常是件麻烦事：得回到终端、Ctrl-C、再敲一遍启动命令，浏览器页面还停在断掉的连接上。这个插件把它变成一个按钮。
 
-- **顶部统计卡**：请求总数、已计量、Token 总数、缓存命中 Token、活跃天数，支持**当日 / 3 天 / 7 天 / 30 天 / 90 天**范围切换与**自定义起止日期**（日历控件）
-- **每日活动热力图**：随所选日期范围自动调整格子数（按周布局），颜色越深当日请求数越高，悬停查看当日 Token 明细
-- **模型板块**：展示所选时间范围内全部模型路由（模型 / 提供方 / 请求数 / 已计量 / Token 数 / 占比进度条），随范围切换，模型多时表格可滚动
-- **Tokens 堆叠柱状图**：按天展示输入（命中缓存 / 未命中缓存）与输出 Token；时间轴从左到右由远及近（最右为最新）；顶部显示范围总量，悬停查看当日三段明细
-- **数据口径**：四桶 Token（uncachedInput / output / cacheRead / cacheWrite）；billed = 产生非零 usage 的请求
-- **会话管理（对话管理）**：设置页"对话管理"以两列查看全部会话与归档会话（含 DSH 内置归档），每行显示标题 / session id / 时间戳，可**一键复制会话 id**、**导出全部归档 id**（换行分隔文本，供本地删除）。本页为只读查看器：归档/删除由 DSH 自身管理
+---
+
+## 特性
+
+| 能力 | 说明 |
+| --- | --- |
+| **原样复活** | 用 `process.execPath` + `process.argv.slice(1)` + 原 cwd + 原 env 拉起新进程。源码模式（`node --import tsx/esm apps/cli/src/bin.ts web`）、自定义端口、包装脚本启动——都能忠实复现，不写死 `dsh web`。 |
+| **不撞端口** | 重启助手等旧进程真正消失、并确认监听端口已释放，才启动新进程，避免 `EADDRINUSE`。 |
+| **页面自动重连** | 前端点完按钮后轮询状态端点，等服务重新应答再自动刷新——你不用猜什么时候刷新。 |
+| **同源防护** | 重启端点只接受同源 POST（校验 `Origin`/`Referer`），不是 CSRF 的靶子。 |
+| **可诊断** | 重启全过程写进日志文件；新进程的 stdout/stderr 也接进同一个文件，重启后的输出不会凭空消失。 |
+| **零运行时依赖** | host 半边只用 `node:*` 内置模块；client 半边手写 `__ModuleLoader__` 工厂，不经打包、不拉依赖。 |
+
+---
 
 ## 安装
 
-### 方式一：GitHub 安装（推荐）
-
-```sh
+```bash
 dsh plugin --profile web add github:lemon49/dsh-token-day
 ```
 
-安装后重启 `dsh web` 即可使用。仓库已提交构建产物 `lib/`，无需任何构建授权。
-
-### 方式二：本地目录引用（开发调试）
-
-在 web profile（`~/.dsh/profiles/web`）中：
-
-1. 编辑 `package.json`：
+或写进 profile 的 `package.json` 后重装：
 
 ```json
 {
-  "dependencies": {
-    "dsh-token-day": "link:D:/codex/dsh-token-day"
-  },
-  "dsh": {
-    "profile": {
-      "bundles": [
-        "@deepseek-ai/dsh-base",
-        "@deepseek-ai/dsh-web-app",
-        "dsh-token-day"
-      ]
-    }
-  }
+  "dependencies": { "dsh-hot-restart": "github:lemon49/dsh-token-day" },
+  "dsh": { "profile": { "bundles": ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app", "dsh-hot-restart"] } }
 }
 ```
 
-2. 安装并重启：
+装完**需要重启一次 dsh** 让它挂载（这是最后一次手动重启）。
 
-```sh
-pnpm install
-dsh web
+本地开发时用 `link:`：
+
+```bash
+dsh plugin --profile web add link:D:\path\to\dsh-hot-restart
 ```
 
-## 更新
+> 仓库名与包名不一致是历史原因（本仓库原为 `dsh-token-day`）。包名以 `package.json` 的 `name` 为准：`dsh-hot-restart`。
 
-通过 dsh 命令更新到最新提交：
-
-```sh
-dsh plugin --profile web update dsh-token-day
-# 或重新安装拉取最新
-dsh plugin --profile web add github:lemon49/dsh-token-day
-```
-
-更新后重启 `dsh web` 生效。若新版本变更了投影结构，插件会自动回放历史会话重建用量投影（耗时与历史会话量相关，后台渐进完成）。
-
-## 构建
-
-```sh
-pnpm install
-pnpm build          # 产出 lib/index.js（Host）与 lib/client.js（Client bundle）
-pnpm typecheck      # host + client 类型检查
-```
+---
 
 ## 使用
 
-1. 启动 DSH Web（`dsh web`），打开 http://127.0.0.1:3080
-2. 进入 **设置 → Token 用量** 查看计费看板；**设置 → 对话管理** 管理会话与归档
-3. 首次启用时，插件会回放历史会话以重建用量投影（数据量大时后台渐进完成）
+打开 **设置 → 通用**，页面最底部是「热重启 DSH 服务」：
 
-## 目录结构
+- 行内显示当前 `PID` 与已运行时长；
+- 点「立即重启」→ 二次确认 → 后端安排重启；
+- 状态依次变成「正在重启…」→「等待新进程启动…」→「重启完成（PID …），正在刷新页面…」，随后页面自动刷新。
+
+**重启会中断正在运行的任务**（包括 agent 正在跑的回合）。会话记录、历史、目标状态都在磁盘上，不会丢；但正在执行的那一步会停在那里。
+
+---
+
+## 工作原理
 
 ```
-dsh-token-day/
-├── src/
-│   ├── index.ts                 # Host 插件入口：投影注册 + 历史回放 + 会话归档
-│   ├── projection.ts            # tokenDay 投影（按模型/按天聚合，含请求计数）
-│   ├── session-archive.ts       # 会话归档存储域 + Web 路由（archived/archive/restore）
-│   ├── types.ts                 # 类型定义与 SessionProjectionMap 增强
-│   └── client/
-│       ├── index.ts             # Client 入口：设置页 slot 注册（Token 用量 + 对话管理）
-│       ├── TokenUsageSection.tsx# 看板组件（统计卡/热力图/模型表/柱状图）
-│       ├── SessionManagerSection.tsx # 对话管理组件（会话/归档查看、复制/导出 id）
-│       ├── locales.ts           # zh / en 文案
-│       ├── TokenUsageSection.module.css
-│       └── SessionManagerSection.module.css
-├── tsdown.config.ts             # 自包含构建配置（含 CSS Modules 内联）
-├── cordis.patch.yml             # bundle 层：挂载插件行
-└── docs/PLAN.md                 # 改造计划文档
+浏览器                 旧 dsh 进程                       重启助手 (detached)         新 dsh 进程
+  │                       │                                  │                        │
+  ├─ POST /restart ──────►│                                  │                        │
+  │                       ├─ spawn(detached, node relaunch) ─►│                        │
+  │◄──── 202 + oldPid ────┤                                  │                        │
+  │                       │                                  ├─ 等 PID 消失 ──────────┤
+  │                       └─ ctx.appExit(0) ────────────────►│  (必要时强杀)           │
+  │                                                          ├─ 等端口释放             │
+  │  (轮询 /status 失败)                                     ├─ spawn(原样 argv) ─────►│
+  │◄──── 200 + newPid ───────────────────────────────────────┼────────────────────────┤
+  └─ location.reload()                                      └─ 退出
 ```
 
-## 数据说明
+几个刻意的设计决定：
 
-- 全部数据来自 DSH 会话事件（`assistant/chunk`、`assistant/message`、`compaction/summary` 等），**不保存提示词或回复正文**
-- 投影 key 为 `tokenDay`（stateVersion 8）
-- 会话归档集合直接读取 DSH 内置归档（workspace registry），通过 `GET /plugins/dsh-token-day/archived` 只读暴露给"对话管理"页面
-- 金额（消费金额/API 标价折算）相关展示不在本轮范围内，后续迭代补充
+**为什么不走 `ctx.subprocess`。** DSH 用自己的 Windows Job Object 管理它 spawn 的命令（`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`，见 `packages/subprocess/win32-process/src/process.ts`）。从那条路出去的助手会随 dsh 进程一起被收割——谁也重启不了。这里用 `node:child_process` 直接 spawn，并以 `detached: true` + `unref()` 脱离。
 
-## 许可证
+**为什么 payload 走文件而不是命令行。** `process.env` 序列化后很容易越过 Windows 32767 字符的命令行上限，那样重启会在最需要它的时候静默失败。
 
-[MIT](LICENSE)
+**为什么不只用 `process.exit()`。** 优先走 `ctx.appExit`，让 launcher 的 bounded shutdown 正常释放端口、flush 会话；只有在它没能在兜底时限内生效时才硬退出。
+
+---
+
+## 配置
+
+写在 profile 的 patch 层里即可覆盖：
+
+```yaml
+- id: hot-restart
+  config:
+    exitDelayMs: 1200      # 响应发出后、请求退出前的等待（100–60000）
+    waitForExitMs: 120000  # 助手等旧进程退出的上限（1000–600000）
+    killOnTimeout: true    # 超时后是否强杀旧进程
+    hardExitMs: 20000      # 优雅退出失效后的硬退出兜底（1000–300000）
+```
+
+---
+
+## 日志与排查
+
+重启日志：`$DSH_HOME/cache/dsh-hot-restart/relaunch.log`（`DSH_HOME` 不可写时退到系统临时目录）。
+
+```text
+[2026-09-21T11:18:42.186Z] relaunch helper started: oldPid=303936 port=3999 waitForExitMs=15000
+[2026-09-21T11:18:43.426Z] old process 303936 exited
+[2026-09-21T11:18:43.430Z] port 3999 released=true
+[2026-09-21T11:18:43.440Z] new process spawned: pid=310168 argv=[...]
+```
+
+新进程的 stdout/stderr 也接进这个文件——重启后的 dsh 输出不会无处可看。
+
+---
+
+## 测试
+
+```bash
+node test/host.test.mjs     # HTTP 层：路由、status、同源防护、方法校验、重复请求
+node test/engine.test.mjs   # 重启引擎：假服务 old → helper → new 接管同一端口
+```
+
+两个测试都不碰真实 dsh 进程。
+
+---
+
+## 已知限制
+
+- 仅面向 **Web profile**（需要 `webServer` 服务）；其他 profile 下 host 半边静默不挂载。
+- 重启是**进程替换**，不是零停机切换：从旧进程退出到新进程 bind 之间有几秒窗口，页面此时显示"等待中"。真正的零停机热重载属于 DSH 自带的 HMR/loader diff（改插件树，不换进程）；本插件负责的是那些**必须换进程**的场合。
+- 首次安装仍需手动重启一次。
+
+---
+
+## License
+
+MIT
