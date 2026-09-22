@@ -10,12 +10,38 @@
 
 | 能力 | 说明 |
 | --- | --- |
-| **原样复活** | `process.execPath` + `process.argv.slice(1)` + 原 cwd + 原 env。源码模式（`node --import tsx/esm apps/cli/src/bin.ts web`）、自定义端口、包装脚本——都能忠实复现，不写死 `dsh web`。 |
-| **不撞端口** | 重启助手等旧进程真正消失、并确认端口释放后才启动新进程，避免 `EADDRINUSE`。 |
+| **原样复活** | `process.execPath` + `process.execArgv` + `process.argv.slice(1)` + 原 cwd + 原 env。源码模式（`node --import tsx/esm apps/cli/src/bin.ts web`）、自定义端口、包装脚本——都能忠实复现，不写死 `dsh web`。 |
+| **不撞端口** | 分离路径下，重启助手等旧进程真正消失、并确认端口释放后才启动新进程，避免 `EADDRINUSE`。 |
 | **页面自动重连** | 前端轮询状态端点，等新进程应答再自动刷新。 |
-| **可诊断** | 全过程写进日志；重启标记（`DSH_TOOLBOX_RESTART_TOKEN`）让"新进程确实起来了"有据可查。 |
+| **可诊断** | 全过程写进日志；重启标记（`DSH_TOOLBOX_TOKEN`）让"新进程确实起来了"有据可查。 |
+| **两种托管方式** | 新进程由谁拉起，决定它重启后还属不属于你的终端——见下。 |
 
-**为什么不走 `ctx.subprocess`**：DSH 用自己的 Windows Job Object 管理它 spawn 的命令（`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`，见 `packages/subprocess/win32-process/src/process.ts`），从那条路出去的助手会随进程一起被收割——那样谁也重启不了。这里用 `node:child_process` 直接 spawn 并以 `detached` 脱离。
+#### 重启之后，新 dsh 还在你的终端里吗？
+
+进程的 console 归属在**创建时**就定死了，事后没法"回到"原来的窗口 —— 一个 `detached` 起来的进程不可能重新长回你的 PowerShell。所以这里分两条路，`lib/index.js` 按环境自动选：
+
+| | 分离进程（默认） | 前台启动器托管 |
+| --- | --- | --- |
+| 怎么进入 | 直接 `node --import tsx/esm apps/cli/src/bin.ts web` | 用 `scripts/dsh-foreground.ps1` 启动 |
+| 谁拉起新进程 | 本进程派出的 detached 助手（`lib/relaunch.js`） | 终端里那层壳（启动器脚本） |
+| 新进程与终端的关系 | **脱离** —— 关掉那个终端它照样跑 | 仍是那个终端的子进程 —— 关窗口 / Ctrl+C 就停 |
+| 面板显示 | 「重启方式：分离进程」 | 「重启方式：前台启动器托管」 |
+
+托管路径下本进程**不 spawn 任何东西**：它往启动器留下的请求文件里写一张"请重启"的字条然后退出，启动器看见字条就在**同一个终端**里原样再跑一遍命令。请求文件旁边还有一份 `supervisor.json`（写着启动器的 PID），本进程**只在那个 PID 仍然存活时**才认托管 —— 启动器被 Ctrl+C 关掉之后再点重启，会自动回落到分离助手，而不是退出到一个没人接的地方。
+
+**为什么不走 `ctx.subprocess`**：DSH 用自己的 Windows Job Object 管理它 spawn 的命令（`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`，见 `packages/subprocess/win32-process/src/process.ts`），从那条路出去的助手会随进程一起被收割——那样谁也重启不了。分离路径因此用 `node:child_process` 直接 spawn 并以 `detached` 脱离；托管路径干脆不 spawn。
+
+#### 让它留在你的终端里
+
+```powershell
+# 第一次：把命令整条交给启动器（带引号，"--import" 才不会被 PowerShell 当参数名吃掉）
+.\scripts\dsh-foreground.ps1 -Launch 'node --import tsx/esm D:\deepseek-harness\apps\cli\src\bin.ts web' -WorkingDirectory D:\deepseek-harness
+
+# 之后：不给参数，复现插件记下的上一次启动命令
+.\scripts\dsh-foreground.ps1
+```
+
+不带参数时启动器读 `~/.dsh/cache/dsh-toolbox/last-launch.json` —— 插件每次启动都会把 `execPath / execArgv / argv / cwd` 记进去，所以"原样复活"在托管路径上同样成立，只是执行者从助手换成了你的终端。`-Launch` 收的是**一整条命令的字符串**（用 PowerShell 自己的解析器拆分），不是数组：`-Launch a b c` 那种写法 PowerShell 绑不过去。
 
 ### 二、待处理提醒
 
@@ -25,11 +51,13 @@
 
 | 请求 | 通知标题 | 通知正文 |
 | --- | --- | --- |
-| 审批工具调用 | `需要审批 · <会话名>` | `请求调用 Bash — 需要删掉构建产物` |
-| 提问 | `需要回答 · <会话名>` | 问题原文，如 `配置写到哪个文件？` |
-| 计划复核 | `需要复核 · <会话名>` | 复核问题原文 |
+| 审批工具调用 | `需要审批` | `请求调用 Bash — 需要删掉构建产物` |
+| 提问 | `需要回答` | 问题原文，如 `配置写到哪个文件？` |
+| 计划复核 | `需要复核` | 复核问题原文 |
 
 内容读自 `PendingApproval.toolName` / `reason` 与 `PendingQuestion.questions[0].question`；字段缺失时退回笼统文案——宁可少说，不编造内容。
+
+标题里**只有请求类型，不带会话标题**。会话标题由 dsh 自动生成、还会随会话内容变，粘到通知标题后面，用户看到的往往是一条已经过期的旧标题（甚至属于别的会话），反而要猜这条提醒是给谁的；正文已经把"批什么、答什么"说清楚了，标题再补一个会话名没有信息增量。所以 client 半边不注入 `sessions` 服务，`describePending()` 只产出标题与正文两段文字。
 
 **为什么不监听 `approval/request`**：它是 waterfall，内置的 `ui-approval` 排在前面且处理完**不调 `next()`**，排在它后面的监听器根本轮不到——而注册顺序由 bundle 加载顺序决定，用户插件插不到前面去。所以改读 `ctx.uiSession.sessionStatus`，它已经把三种交互统一投影成 `pendingInteraction`：
 
@@ -86,6 +114,7 @@ dsh plugin --profile web add link:D:\codex\dsh-toolbox
 | 浏览器最小化时收到审批提醒 | ✅ |
 | **浏览器完全关闭**时收到审批提醒 | ❌ client 插件只活在页面里 |
 | 重启时保住在跑的任务 | ❌ 重启就是换进程，正在执行的回合会停在那里（会话与历史在磁盘上，不会丢） |
+| **重启后仍在原终端里** | ✅ 用 `scripts/dsh-foreground.ps1` 启动；直接 `node ... bin.ts web` 启动则是 ❌（新进程脱离终端） |
 
 要覆盖"浏览器关掉也要提醒"，得在 `lib/index.js` 里加 host 逻辑弹 PowerShell 原生 toast——host 侧的 `ctx.on` 支持 `{ prepend: true }`，能插到 `ui-approval` 前面去。需要时再说。
 
@@ -113,22 +142,24 @@ SyntaxError: The requested module '@deepseek-ai/cordis' does not provide an expo
 ## 结构
 
 ```
-lib/index.js         host 半边：HTTP 路由（/api/toolbox/status、/api/toolbox/restart）+ 重启调度
-lib/relaunch.js      detached 重启助手：等旧进程消失、等端口释放、按 execArgv + argv 原样拉起新进程
-lib/client.js        浏览器半边：「工具箱」设置页 + 两个面板 + 提醒观察逻辑
-cordis.patch.yml     插入 host 行
-test/host.test.mjs   HTTP 层 14 项断言
-test/client.test.mjs 加载契约与提醒行为 39 项断言
-test/engine.test.mjs 重启引擎端到端 4 项断言
+lib/index.js                 host 半边：HTTP 路由（/api/toolbox/status、/api/toolbox/restart）+ 两条重启路径
+lib/relaunch.js              分离路径的重启助手：等旧进程消失、等端口释放、按 execArgv + argv 原样拉起新进程
+lib/client.js                浏览器半边：「工具箱」设置页 + 两个面板 + 提醒观察逻辑
+scripts/dsh-foreground.ps1   前台启动器：留在终端里跑 dsh，收到请求就在同一窗口重新拉起
+cordis.patch.yml             插入 host 行
+test/host.test.mjs           HTTP 层与两种托管模式 20 项断言
+test/client.test.mjs         加载契约与提醒行为 40 项断言
+test/engine.test.mjs         分离路径端到端 4 项断言
+test/supervisor.test.mjs     前台启动器端到端 7 项断言
 ```
 
 ## 测试
 
 ```sh
-node test/host.test.mjs && node test/client.test.mjs && node test/engine.test.mjs
+node test/host.test.mjs && node test/client.test.mjs && node test/engine.test.mjs && node test/supervisor.test.mjs
 ```
 
-三个测试都不碰真实 dsh 进程。
+四个测试都不碰真实 dsh 进程。`supervisor.test.mjs` 会真的起一个 PowerShell 来跑 `scripts/dsh-foreground.ps1`，并断言"第二次启动的父进程仍然是启动器" —— 也就是整个功能的那句承诺；机器上没有可用的 PowerShell 时它会跳过。
 
 ## License
 

@@ -6,7 +6,9 @@
  *   2. 分区下挂着「服务重启」和「待处理提醒」两个面板；
  *   3. 提醒的每一个时机分支都对 —— 弹错了是打扰，漏弹了是白装；
  *   4. 通知的内容**和那条请求本身一致**（哪个工具、什么问题），而不是笼统的
- *      "有人找你" —— 否则用户照样得切回页面才知道要批什么，提醒就白弹了。
+ *      "有人找你" —— 否则用户照样得切回页面才知道要批什么，提醒就白弹了；
+ *   5. 通知标题里**不带会话标题**：会话标题是自动生成、还会过期的，粘上去只会
+ *      让人误以为这条提醒属于那个旧会话。
  *
  * 翻译函数用**真实字典**而不是回显 key：第 4 条断言要检查插值后的成品文案，
  * 回显 key 的假 t 会让 `{tool}` 永远填不上，测试就失去意义。
@@ -83,9 +85,10 @@ check('module id equals the package name', registration?.id === 'dsh-toolbox')
 
 const mod = registration.factory(require)
 check('exports.apply is a function', typeof mod.apply === 'function')
-check('injects uiSession/sessions/locale/slots',
+check('injects uiSession/locale/slots',
   Array.isArray(mod.inject)
-  && ['uiSession', 'sessions', 'locale', 'slots'].every((name) => mod.inject.includes(name)))
+  && ['uiSession', 'locale', 'slots'].every((name) => mod.inject.includes(name)))
+check('does not depend on the sessions service', !mod.inject.includes('sessions'))
 check('styles injected once', injectedStyles.length === 1)
 
 // ---------- 假的 client 上下文 ----------
@@ -118,9 +121,6 @@ const ctx = {
       subscribe: (listener) => { statusListener = listener; return () => { statusListener = null } },
     },
   },
-  sessions: {
-    list: { getSnapshot: () => ({ byId: { s1: { displayTitle: '会话一' } } }) },
-  },
 }
 
 mod.apply(ctx)
@@ -128,6 +128,8 @@ mod.apply(ctx)
 check('registers zh and en dictionaries',
   locales.some(([, langs]) => langs.includes('zh') && langs.includes('en')))
 check('dictionary resolved for assertions', typeof dictionary.notifyWaitApproval === 'string')
+check('dictionary carries both restart-mode lines',
+  typeof dictionary.restartSupervised === 'string' && typeof dictionary.restartDetached === 'string')
 
 // 关键断言：独立分区，而不是「通用」里的一行。
 const section = slots.find(([options]) => options.name === 'settings.section')
@@ -178,9 +180,12 @@ const last = () => notifications[notifications.length - 1]
 // 审批：请求体里有 toolName 和 reason。
 appear('k1', 'approval', 's1', { toolName: 'Bash', reason: '需要删掉构建产物' })
 check('alerts while the page is hidden', notifications.length === 1)
-check('notification title names the session', String(last()?.title).includes('会话一'))
 check('notification title says an approval is needed',
   String(last()?.title).includes(dictionary.notifyWaitApproval))
+// 标题不粘会话名：会话标题是自动生成的、还会过期，弹窗里带上一句旧会话的标题
+// 只会让人误以为提醒属于那个会话。
+check('notification title names no session at all',
+  String(last()?.title) === dictionary.notifyWaitApproval)
 check('approval body names the requesting tool', String(last()?.options?.body).includes('Bash'))
 check('approval body carries the requester reason',
   String(last()?.options?.body).includes('需要删掉构建产物'))

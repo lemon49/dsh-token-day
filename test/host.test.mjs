@@ -5,6 +5,15 @@
  * 唯一会真的派生进程的分支用超长 `exitDelayMs` 拖住，拿到 202 后立刻杀掉
  * helper —— 否则它会在本测试退出后拉起一个新测试进程，无限递归。
  */
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+// apply() 会把"本进程是怎么起来的"记进缓存目录，好让前台启动器无参数复现它。
+// 测试进程绝不能往用户的真实缓存里写 —— 否则以后无参数启动复现出来的会是
+// `node test/host.test.mjs` 这种东西。
+process.env.DSH_HOME = join(tmpdir(), `dsh-toolbox-test-home-${process.pid}`)
+
 const mod = await import(new URL('../lib/index.js', import.meta.url).href)
 
 const routes = []
@@ -109,6 +118,70 @@ if (Number.isInteger(sameOrigin.json.value.helperPid)) {
 const again = await call('POST', '/api/toolbox/restart', { origin: 'http://127.0.0.1:3080' })
 results.push(['duplicate rejected 409', again.status === 409 && again.json.error.code === 'already-restarting'])
 console.log('duplicate ->', again.status, again.json.error.code)
+
+// ---------- 前台启动器托管模式 ----------
+
+// 上面那个实例已经在重启中，这里另起一个模块实例（query 破 ESM 缓存）。
+const supervisedMod = await import(new URL('../lib/index.js?supervised', import.meta.url).href)
+
+const sessionDir = join(tmpdir(), `dsh-toolbox-supervisor-test-${process.pid}`)
+mkdirSync(sessionDir, { recursive: true })
+const requestPath = join(sessionDir, 'restart.request')
+const supervisorJsonPath = join(sessionDir, 'supervisor.json')
+// 故意带上 BOM：Windows PowerShell 5.1 的 UTF8 输出就是这样的，插件要照样认。
+writeFileSync(supervisorJsonPath, `\uFEFF${JSON.stringify({ pid: process.pid })}`, 'utf8')
+process.env.DSH_TOOLBOX_REQUEST = requestPath
+
+const supervisedRoutes = []
+const supervisedWebCtx = {
+  webServer: {
+    port: 3080,
+    register(spec) { supervisedRoutes.push(spec); return () => {} },
+  },
+  effect: (fn) => fn(),
+}
+supervisedMod.apply({
+  logger: { info: () => {}, warn: () => {} },
+  get: () => undefined,
+  inject: (names, cb) => { cb(supervisedWebCtx) },
+}, { exitDelayMs: 600000, hardExitMs: 600000 })
+
+const supervisedRoute = supervisedRoutes[0]
+async function supervisedCall(method, url, headers = {}) {
+  const res = makeRes()
+  await supervisedRoute.handler(
+    { method, url, headers: { host: '127.0.0.1:3080', ...headers }, socket: { remoteAddress: '127.0.0.1' } },
+    res,
+  )
+  return { status: res._out.status, json: res._out.body === '' ? null : JSON.parse(res._out.body) }
+}
+
+const supervisedStatus = await supervisedCall('GET', '/api/toolbox/status')
+results.push(['status reports supervised mode', supervisedStatus.json.value.supervised === true])
+console.log('supervised status ->', supervisedStatus.status, supervisedStatus.json.value.supervised)
+
+const supervisedRestart = await supervisedCall('POST', '/api/toolbox/restart', { origin: 'http://127.0.0.1:3080' })
+console.log('supervised restart ->', supervisedRestart.status, JSON.stringify(supervisedRestart.json.value))
+results.push(['supervised restart accepted 202',
+  supervisedRestart.status === 202 && supervisedRestart.json.value.supervised === true])
+results.push(['supervised restart names the supervisor pid',
+  supervisedRestart.json.value.supervisorPid === process.pid])
+// 托管路径不派生任何助手 —— 新进程由终端里那层壳负责。
+results.push(['supervised restart spawns no helper',
+  supervisedRestart.json.value.helperPid === undefined])
+results.push(['supervised restart writes the request file',
+  JSON.parse(readFileSync(requestPath, 'utf8')).pid === process.pid])
+
+// 启动器已经被 Ctrl+C 关掉（或窗口被关）：这时再"退出等人拉起"就永远起不来了，
+// 必须认出来并回落到分离助手。
+rmSync(supervisorJsonPath)
+const orphaned = await supervisedCall('GET', '/api/toolbox/status')
+results.push(['supervised mode is dropped once the supervisor is gone',
+  orphaned.json.value.supervised === false])
+console.log('orphaned status ->', orphaned.status, orphaned.json.value.supervised)
+
+delete process.env.DSH_TOOLBOX_REQUEST
+rmSync(sessionDir, { recursive: true, force: true })
 
 let failed = 0
 for (const [label, ok] of results) {
