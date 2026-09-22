@@ -9,7 +9,7 @@ const tag = String(process.argv[3] ?? 'unknown')
 
 const server = createServer((req, res) => {
   res.writeHead(200, { 'content-type': 'application/json' })
-  res.end(JSON.stringify({ ok: true, pid: process.pid, tag }))
+  res.end(JSON.stringify({ ok: true, pid: process.pid, tag, execArgv: process.execArgv }))
 })
 
 server.listen(port, '127.0.0.1', () => {

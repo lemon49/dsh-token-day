@@ -89,16 +89,37 @@ dsh plugin --profile web add link:D:\codex\dsh-toolbox
 
 要覆盖"浏览器关掉也要提醒"，得在 `lib/index.js` 里加 host 逻辑弹 PowerShell 原生 toast——host 侧的 `ctx.on` 支持 `{ prepend: true }`，能插到 `ui-approval` 前面去。需要时再说。
 
+## 一个必须复现的细节：`execArgv`
+
+dsh 的启动命令是：
+
+```sh
+node --import tsx/esm apps/cli/src/bin.ts web
+```
+
+`--import tsx/esm` 只存在于 **`process.execArgv`**，**不在 `process.argv` 里**。助手若只复现
+`execPath + argv`，新进程就会退化成裸 node 去跑 `.ts`，走 **Node 原生 type stripping**——那是
+纯语法擦除、不做类型分析，于是 `vendor/cordis` 的 `export const enum FiberState` 不会被内联
+擦除，ESM 链接当场失败：
+
+```
+SyntaxError: The requested module '@deepseek-ai/cordis' does not provide an export named 'FiberState'
+```
+
+现象就是**点了重启，服务再也没起来**。所以 payload 一定带上 `execArgv`，助手按
+`[...execArgv, ...argv]` 拉起新进程；`GET /api/toolbox/status` 也会回报它，`relaunch.log` 里
+连完整命令一起记，方便事后核对。
+
 ## 结构
 
 ```
 lib/index.js         host 半边：HTTP 路由（/api/toolbox/status、/api/toolbox/restart）+ 重启调度
-lib/relaunch.js      detached 重启助手：等旧进程消失、等端口释放、原样拉起新进程
+lib/relaunch.js      detached 重启助手：等旧进程消失、等端口释放、按 execArgv + argv 原样拉起新进程
 lib/client.js        浏览器半边：「工具箱」设置页 + 两个面板 + 提醒观察逻辑
 cordis.patch.yml     插入 host 行
-test/host.test.mjs   HTTP 层 13 项断言
-test/client.test.mjs 加载契约与提醒行为 28 项断言
-test/engine.test.mjs 重启引擎端到端 3 项断言
+test/host.test.mjs   HTTP 层 14 项断言
+test/client.test.mjs 加载契约与提醒行为 39 项断言
+test/engine.test.mjs 重启引擎端到端 4 项断言
 ```
 
 ## 测试

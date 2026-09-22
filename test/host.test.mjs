@@ -52,6 +52,7 @@ const status = await call('GET', '/api/toolbox/status')
 results.push(['status 200', status.status === 200 && status.json.ok === true])
 results.push(['status carries pid', status.json.value.pid === process.pid])
 results.push(['status carries argv', Array.isArray(status.json.value.argv)])
+results.push(['status carries execArgv', Array.isArray(status.json.value.execArgv)])
 console.log('status ->', status.status, JSON.stringify(status.json.value))
 
 const crossOrigin = await call('POST', '/api/toolbox/restart', { origin: 'http://evil.example' })

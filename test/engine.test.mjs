@@ -42,6 +42,10 @@ results.push(['old process serves the port', before.tag === 'old'])
 const payload = {
   pid: oldProc.pid,
   execPath: process.execPath,
+  // Node 自身的启动参数必须一起复现：漏掉它，新进程会退化到原生 type
+  // stripping，而 dsh 的源码树依赖 tsx 做类型感知转译（const enum 内联）。
+  // 这里用一个可观察的合法 flag 验证它确实到了新进程。
+  execArgv: ['--title=dsh-toolbox-probe'],
   argv: [SERVICE, String(PORT), 'new'],
   cwd: process.cwd(),
   env: process.env,
@@ -75,6 +79,8 @@ const after = await probe()
 console.log('probe after:', JSON.stringify(after))
 results.push(['new process took over the port', after.tag === 'new'])
 results.push(['new process is a different pid', after.pid !== oldProc.pid])
+results.push(['execArgv reached the new process',
+  Array.isArray(after.execArgv) && after.execArgv.includes('--title=dsh-toolbox-probe')])
 
 let failed = 0
 for (const [label, ok] of results) {
